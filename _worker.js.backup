@@ -7,47 +7,175 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
-    
-    // 检查 KV 是否绑定
-    if (!env.IP_STORAGE) {
-      return new Response('KV namespace IP_STORAGE is not bound. Please bind it in Worker settings.', {
-        status: 500,
-        headers: { 'Content-Type': 'text/plain' }
-      });
+
+    // 必须绑定两个 KV
+    if (!env.IP_STORAGE || !env.IP_LOCATION) {
+      return new Response('Missing KV binding: IP_STORAGE or IP_LOCATION', { status: 500 });
     }
-    
-    if (request.method === 'OPTIONS') {
-      return handleCORS();
-    }
+
+    if (request.method === 'OPTIONS') return handleCORS();
 
     try {
       switch (path) {
-        case '/':
-          return await serveHTML(env);
-        case '/update':
-          if (request.method !== 'POST') {
-            return jsonResponse({ error: 'Method not allowed' }, 405);
-          }
-          return await handleUpdate(env);
-        case '/ips':
-          return await handleGetIPs(env);
-        case '/ip.txt':
-          return await handleGetIPs(env);
-        case '/raw':
-          return await handleRawIPs(env);
-        case '/speedtest':
-          return await handleSpeedTest(request, env);
-        case '/itdog-data':
-          return await handleItdogData(env);
-        default:
-          return jsonResponse({ error: 'Endpoint not found' }, 404);
+        case '/':          return await serveHTML(env);
+        case '/update':    return request.method === 'POST' ? await handleUpdate(env) : jsonResponse({error:'Method not allowed'},405);
+        case '/ips':       return await handleGetIPs(env);          // 纯文本 ip#地区
+        case '/ip.txt':    return await handleGetIPs(env);
+        case '/raw':       return await handleRawIPs(env);          // JSON，ips 为 ["ip#地区", ...]
+        case '/speedtest': return await handleSpeedTest(request, env);
+        case '/itdog-data':return await handleItdogData(env);
+        default:           return jsonResponse({error:'Not found'},404);
       }
-    } catch (error) {
-      console.error('Error:', error);
-      return jsonResponse({ error: error.message }, 500);
+    } catch (e) {
+      console.error(e);
+      return jsonResponse({error:e.message},500);
     }
   }
 };
+
+/* ====================== 地区查询核心 ====================== */
+// 将 ip2region.xdb（约 8MB）直接放在 Worker 里（上传为 Asset 或直接 base64 嵌入均可）
+const XDB_BUFFER = IP2REGION_XDB;   // ← 你需要在 Worker 编辑器里上传名为 ip2region.xdb 的文件并引用
+
+let searcher = null;
+async function getSearcher() {
+  if (searcher) return searcher;
+  // Cloudflare Worker 全局只创建一次
+  searcher = await import('ip2region').then(mod => mod.newSearcher(XDB_BUFFER));
+  return searcher;
+}
+
+async function getLocation(ip) {
+  try {
+    const s = await getSearcher();
+    const result = await s.search(ip);
+    if (result && result.region) {
+      // 结果示例：中国|0|广东省|广州市|电信
+      const parts = result.region.split('|');
+      const arr = [];
+      if (parts[0] && parts[0] !== '0') arr.push(parts[0]);
+      if (parts[2] && parts[2] !== '0') arr.push(parts[2]);
+      if (parts[3] && parts[3] !== '0') arr.push(parts[3]);
+      return arr.length ? arr.join('-') : '中国';
+    }
+  } catch (e) {
+    console.error('IP location error', ip, e);
+  }
+  return '未知地区';
+}
+
+// 带缓存的地区查询（KV 缓存 30 天）
+async function getLocationCached(env, ip) {
+  const cacheKey = `loc:${ip}`;
+  let loc = await env.IP_LOCATION.get(cacheKey);
+  if (loc) return loc;
+
+  loc = await getLocation(ip);
+  await env.IP_LOCATION.put(cacheKey, loc, { expirationTtl: 60*60*24*30 });
+  return loc;
+}
+
+/* ====================== 页面渲染 ====================== */
+async function serveHTML(env) {
+  const data = await getStoredIPsWithLocation(env);
+
+  const ipItemsHTML = data.ips.length ? data.ips.map(item => {
+    const [ip, loc] = item.split('#');
+    const safeId = ip.replace(/\./g, '-');
+    return `
+      <div class="ip-item" data-ip="${ip}">
+        <div class="ip-info">
+          <span class="ip-address">${ip}<span style="color:#64748b;font-size:0.9em;margin-left:8px;">${loc}</span></span>
+          <span class="speed-result" id="speed-${safeId}">-</span>
+        </div>
+        <div class="action-buttons">
+          <button class="small-btn" onclick="testSingleIP('${ip}')" id="test-${safeId}">测速</button>
+          <button class="small-btn" onclick="copyIP('${ip}#${loc}')">复制</button>
+        </div>
+      </div>`;
+  }).join('') : '<p style="text-align:center;color:#64748b;padding:40px;">暂无数据</p>';
+
+  const html = `<!DOCTYPE html>...（保持你原来的完整 HTML，只把 IP 列表部分替换为上面 ${ipItemsHTML}）...`;
+
+  // 其余 HTML 保持原样，只需要把统计数字那里的 last-time 等照旧
+  return new Response(html.replace('{{IP_ITEMS}}', ipItemsHTML), {
+    headers: {'Content-Type':'text/html;charset=utf-8'}
+  });
+}
+
+/* ====================== 数据读取（带地区） ====================== */
+async function getStoredIPsWithLocation(env) {
+  const raw = await getStoredIPs(env);
+  if (!raw.ips || raw.ips.length === 0) return raw;
+
+  // 如果已经带地区了直接返回（防止重复计算）
+  if (raw.ips[0].includes('#')) return raw;
+
+  const ipsWithLoc = [];
+  for (const ip of raw.ips) {
+    const loc = await getLocationCached(env, ip);
+    ipsWithLoc.push(`${ip}#${loc}`);
+  }
+
+  // 把带地区的列表写回 KV，后面直接读取就无需再次计算
+  await env.IP_STORAGE.put('cloudflare_ips', JSON.stringify({
+    ...raw,
+    ips: ipsWithLoc
+  }));
+
+  return { ...raw, ips: ipsWithLoc };
+}
+
+/* ====================== 各接口统一返回带地区 ====================== */
+async function handleGetIPs(env) {
+  const data = await getStoredIPsWithLocation(env);
+  const text = data.ips.map(i => i.replace('#', ' # ')).join('\n'); // 可读性更好
+  return new Response(text, {
+    headers: {
+      'Content-Type': 'text/plain;charset=utf-8',
+      'Content-Disposition': 'attachment; filename="cloudflare_ips.txt"'
+    }
+  });
+}
+
+async function handleRawIPs(env) {
+  const data = await getStoredIPsWithLocation(env);
+  return jsonResponse(data);
+}
+
+async function handleItdogData(env) {
+  const data = await getStoredIPsWithLocation(env);
+  return jsonResponse({ ips: data.ips.map(i => i.split('#')[0]) }); // ITDog 只需要纯 IP
+}
+
+/* ====================== 更新时自动附加地区 ====================== */
+async function handleUpdate(env) {
+  const start = Date.now();
+  const { uniqueIPs, results } = await updateAllIPs(env);
+
+  // 逐个查询地区并缓存
+  const ipsWithLoc = [];
+  for (const ip of uniqueIPs) {
+    const loc = await getLocationCached(env, ip);
+    ipsWithLoc.push(`${ip}#${loc}`);
+  }
+
+  const payload = {
+    ips: ipsWithLoc,
+    lastUpdated: new Date().toISOString(),
+    count: ipsWithLoc.length,
+    sources: results
+  };
+
+  await env.IP_STORAGE.put('cloudflare_ips', JSON.stringify(payload));
+
+  return jsonResponse({
+    success: true,
+    totalIPs: ipsWithLoc.length,
+    duration: `${Date.now() - start}ms`,
+    timestamp: new Date().toISOString()
+  });
+}
 
 // 提供HTML页面
 async function serveHTML(env) {
@@ -1363,4 +1491,3 @@ function handleCORS() {
     }
   });
 }
-
