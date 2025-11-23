@@ -1,0 +1,131 @@
+name: 混淆并创建 GitHub 发行版
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:      # 支持手动触发强制全量执行
+  schedule:
+    - cron: '0 */11 * * *'  # 每9小时检查一次上游更新
+
+jobs:
+  obfuscate-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: 检查上游 _worker.js 是否有更新
+        id: check-update
+        run: |
+          set -euo pipefail
+
+          UPSTREAM_URL="https://raw.githubusercontent.com/ethgan/CF-Worker-BestIP-collector/main/_worker.js"
+          BACKUP_FILE="_worker.js.backup"
+          HASH_FILE=".worker_hash"
+
+          echo "正在从上游拉取最新 _worker.js ..."
+          curl -fsSL "$UPSTREAM_URL" -o temp_worker.js
+
+          NEW_HASH=$(sha256sum temp_worker.js | cut -d' ' -f1)
+          OLD_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
+
+          if [ "$NEW_HASH" != "$OLD_HASH" ] || [ ! -f "$BACKUP_FILE" ]; then
+            echo "检测到上游代码更新或首次运行"
+            mv -f temp_worker.js "$BACKUP_FILE"
+            echo "$NEW_HASH" > "$HASH_FILE"
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "version=$NEW_HASH" >> $GITHUB_OUTPUT
+          else
+            echo "上游代码无变化，跳过后续步骤"
+            rm -f temp_worker.js
+            echo "has_update=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 只有在真正有更新 或 手动触发时才执行后续步骤
+      - name: 配置 Node.js 环境
+        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'latest'
+          cache: 'npm'
+
+      - name: 安装依赖
+        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          npm ci
+          sudo apt-get update -qq
+          sudo apt-get install -y zip jq -qq
+
+      - name: 从备份生成临时文件并混淆
+        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          cp _worker.js.backup _worker.js.temp
+          npm run build -- --input _worker.js.temp --output _worker.js
+          rm -f _worker.js.temp
+
+      - name: 打包为 worker.zip
+        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          zip -j worker.zip _worker.js
+
+      - name: 提交混淆后的代码和备份
+        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add _worker.js _worker.js.backup .worker_hash worker.zip
+          
+          if git diff --cached --quiet; then
+            echo "没有文件变更，跳过提交"
+          else
+            VERSION="${{ steps.check-update.outputs.version || 'manual' }}"
+            git commit -m "Auto update: obfuscated worker.js (v${VERSION:0:8})"
+          fi
+
+      - name: Push 更改到 main 分支
+        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
+        uses: ad-m/github-push-action@v0.8.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
+
+      # 只有在自动检测到更新时才创建 Release（手动触发也创建）
+      - name: 创建或覆盖 GitHub Release
+        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # 手动触发时若无真实更新，使用 "manual" 作为版本
+          if [ "${{ steps.check-update.outputs.has_update }}" == "true" ]; then
+            VERSION="${{ steps.check-update.outputs.version }}"
+          else
+            VERSION="manual-$(date +%Y%m%d-%H%M%S)"
+          fi
+
+          echo "正在为版本 $VERSION 创建/覆盖 Release..."
+
+          # 删除可能已存在的同名 tag（防止冲突）
+          git push origin :refs/tags/$VERSION || true
+
+          # 创建轻量标签并推送到远程
+          git tag -f "$VERSION"
+          git push -f origin "$VERSION"
+
+          # 使用 gh cli 创建 release（更简洁可靠）
+          gh release create "$VERSION" \
+            --title "Worker Release $VERSION" \
+            --notes "Automated obfuscated release from ethgan/CF-Worker-BestIP-collector" \
+            --repo "${{ github.repository }}" \
+            worker.zip _worker.js.backup
+
+          echo "Release $VERSION 创建成功并上传资产完成！"
