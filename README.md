@@ -17,6 +17,9 @@
 
 一个基于 Cloudflare Workers 的优选 CF IP 地址收集与测速工具，自动从多个公开来源收集 Cloudflare IP 地址，并提供可视化界面和测速功能。
 
+<img width="1540" height="777" alt="image" src="https://github.com/user-attachments/assets/36015630-f16b-451c-9a51-7ff53fa602de" />
+<img width="1540" height="777" alt="image" src="https://github.com/user-attachments/assets/cf60055a-9951-4520-92a3-7340fa46dc73" />
+
 ## 🌟 功能特点
 
 - **自动收集**：定时从多个公开来源自动收集 Cloudflare IP 地址
