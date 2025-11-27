@@ -6,7 +6,7 @@ on:
   workflow_dispatch:      # 手动触发强制重新混淆并覆盖发布
   schedule:
     - cron: '0 */12 * * *'  # 可保留也可删除，已无实际作用
-    
+
 jobs:
   obfuscate-and-release:
     runs-on: ubuntu-latest
@@ -31,20 +31,17 @@ jobs:
           npm ci
           sudo apt-get update -qq && sudo apt-get install -y zip jq -qq
 
-      - name: 计算 backup 文件哈希 → 确定 Release tag
+      - name: 计算 _worker.js.backup 哈希 → 生成 tag
         id: hash
         run: |
           set -euo pipefail
-          BACKUP="_worker.js.backup"
-          [ -f "$BACKUP" ] || { echo "错误：$BACKUP 不存在"; exit 1; }
-          
-          FULL_HASH=$(sha256sum "$BACKUP" | awk '{print $1}')
+          [ -f "_worker.js.backup" ] || { echo "错误：_worker.js.backup 不存在"; exit 1; }
+          FULL_HASH=$(sha256sum "_worker.js.backup" | awk '{print $1}')
           TAG="${FULL_HASH:0:12}"
-          
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "full_hash=$FULL_HASH" >> $GITHUB_OUTPUT
 
-      - name: 混淆 & 打包
+      - name: 混淆并打包
         run: |
           cp _worker.js.backup _worker_temp.js
           npm run build -- --input _worker_temp.js --output _worker.js
@@ -68,44 +65,59 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: main
 
-      # 核心：智能增量覆盖 —— 只上传有变化的资产文件
+      # 关键修复：先保证 Release 和 tag 一定存在
+      - name: 确保 Release 存在（首次自动创建）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.hash.outputs.tag }}"
+          
+          # 如果 Release 已存在则直接跳过，不报错
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在"
+          else
+            echo "首次创建空 Release $TAG"
+            gh release create "$TAG" \
+              --title "Worker $TAG" \
+              --notes "Source hash: ${{ steps.hash.outputs.full_hash }}" \
+              --draft=false --prerelease=false
+          fi
+          
+          # 确保 tag 存在并指向最新 commit
+          git tag -f "$TAG"
+          git push -f origin "$TAG"
+
+      # 真正智能增量上传：只上传有变化的资产
       - name: 智能上传资产（只覆盖改变的文件）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="${{ steps.hash.outputs.tag }}"
+          ASSETS=("worker.zip" "_worker.js.backup")
 
-          # 确保 tag 存在（首次会自动创建）
-          git tag -f "$TAG" 2>/dev/null || git tag "$TAG"
-          git push -f origin "$TAG" || true
-
-          # 定义要上传的资产
-          ASSETS=(
-            "worker.zip"
-            "_worker.js.backup"
-          )
-
-          # 遍历每个资产，计算本地哈希 vs 远程已有资产哈希，只上传有变化的
           for asset in "${ASSETS[@]}"; do
-            if [ ! -f "$asset" ]; then
-              echo "跳过不存在的文件: $asset"
-              continue
-            fi
+            [ -f "$asset" ] || continue
 
             LOCAL_HASH=$(sha256sum "$asset" | cut -d' ' -f1)
 
-            # 尝试获取远程同名资产的下载 URL（不存在则返回 404）
-            DOWNLOAD_URL=$(gh release view "$TAG" --json assets --jq ".assets[].url" 2>/dev/null | grep -i "/$asset\"" || true)
+            # 尝试获取远程同名资产的 ID（不存在返回空）
+            ASSET_ID=$(gh api "/repos/{owner}/{repo}/releases/tags/$TAG" \
+              --jq ".assets[] | select(.name == \"$asset\") | .id" 2>/dev/null || echo "")
 
-            if [ -z "$DOWNLOAD_URL" ]; then
+            if [ -z "$ASSET_ID" ]; then
               echo "首次上传 → $asset"
               gh release upload "$TAG" "$asset" --clobber
               continue
             fi
 
-            # 下载远程资产并计算哈希（使用 GitHub API 的重定向真实地址）
-            REMOTE_HASH=$(curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" | sha256sum | cut -d' ' -f1)
+            # 获取远程资产下载地址并计算哈希
+            REMOTE_URL=$(gh api "/repos/{owner}/{repo}/releases/assets/$ASSET_ID" \
+              --jq '.url' | sed 's/^"//;s/"$//')
+
+            REMOTE_HASH=$(curl -sL -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/octet-stream" "$REMOTE_URL" | sha256sum | cut -d' ' -f1)
 
             if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
               echo "检测到变化 → 覆盖上传 $asset"
@@ -115,8 +127,4 @@ jobs:
             fi
           done
 
-          # 最后确保 Release 存在（如果之前没有任何资产，会自动创建）
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "Worker $TAG" --notes "Source hash: ${{ steps.hash.outputs.full_hash }}" ${ASSETS[*]}
-
-          echo "Release $TAG 处理完成！仅上传了发生变化的文件"
+          echo "Release $TAG 全部处理完成！仅上传了发生变化的文件"
