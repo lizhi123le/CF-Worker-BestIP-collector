@@ -20,7 +20,7 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: 配置 Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 'latest'
@@ -31,42 +31,33 @@ jobs:
           npm ci
           sudo apt-get update -qq && sudo apt-get install -y zip jq -qq
 
-      - name: 计算 _worker.js.backup 的哈希并生成 tag
+      - name: 计算 backup 文件哈希 → 确定 Release tag
         id: hash
         run: |
           set -euo pipefail
           BACKUP="_worker.js.backup"
-          [ -f "$BACKUP" ] || { echo "Error: $BACKUP 不存在！"; exit 1; }
+          [ -f "$BACKUP" ] || { echo "错误：$BACKUP 不存在"; exit 1; }
           
-          FULL_HASH=$(sha256sum "$BACKUP" | cut -d' ' -f1)
+          FULL_HASH=$(sha256sum "$BACKUP" | awk '{print $1}')
           TAG="${FULL_HASH:0:12}"
           
-          echo "Source file : $BACKUP"
-          echo "SHA256      : $FULL_HASH"
-          echo "Release tag : $TAG"
-          
-          echo "full_hash=$FULL_HASH" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "full_hash=$FULL_HASH" >> $GITHUB_OUTPUT
 
-      - name: 从 backup 创建临时文件并混淆
+      - name: 混淆 & 打包
         run: |
           cp _worker.js.backup _worker_temp.js
           npm run build -- --input _worker_temp.js --output _worker.js
           rm -f _worker_temp.js _worker.js.temp
-
-      - name: 打包 worker.zip
-        run: |
           zip -j worker.zip _worker.js
 
-      - name: 提交混淆后的 _worker.js 和 zip（仅当有变化时）
+      - name: 提交混淆结果（可选）
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
           git add _worker.js worker.zip
-          
           if git diff --cached --quiet; then
-            echo "混淆后文件无变化，跳过 commit"
+            echo "混淆后无变化，跳过 commit"
           else
             git commit -m "Update obfuscated worker.js (${{ steps.hash.outputs.tag }})"
           fi
@@ -76,29 +67,56 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: main
-          
-  # 只有在自动检测到更新时才创建 Release（手动触发也创建）
-  - name: 创建或覆盖 GitHub Release
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    run: |
-      set -euo pipefail
-      TAG="${{ steps.hash.outputs.tag }}"
 
-      echo "正在为版本 $VERSION 创建/覆盖 Release..."
+      # 核心：智能增量覆盖 —— 只上传有变化的资产文件
+      - name: 智能上传资产（只覆盖改变的文件）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.hash.outputs.tag }}"
 
-      # 删除可能已存在的同名 tag（防止冲突）
-      git push origin :refs/tags/$VERSION || true
+          # 确保 tag 存在（首次会自动创建）
+          git tag -f "$TAG" 2>/dev/null || git tag "$TAG"
+          git push -f origin "$TAG" || true
 
-      # 创建轻量标签并推送到远程
-      git tag -f "$VERSION"
-      git push -f origin "$VERSION"
+          # 定义要上传的资产
+          ASSETS=(
+            "worker.zip"
+            "_worker.js.backup"
+          )
 
-      # 使用 gh cli 创建 release（更简洁可靠）
-      gh release create "$VERSION" \
-        --title "Worker Release $VERSION" \
-        --notes "Automated obfuscated release from ethgan/CF-Worker-BestIP-collector" \
-        --repo "${{ github.repository }}" \
-        worker.zip _worker.js.backup
+          # 遍历每个资产，计算本地哈希 vs 远程已有资产哈希，只上传有变化的
+          for asset in "${ASSETS[@]}"; do
+            if [ ! -f "$asset" ]; then
+              echo "跳过不存在的文件: $asset"
+              continue
+            fi
 
-      echo "Release $VERSION 创建成功并上传资产完成！"
+            LOCAL_HASH=$(sha256sum "$asset" | cut -d' ' -f1)
+
+            # 尝试获取远程同名资产的下载 URL（不存在则返回 404）
+            DOWNLOAD_URL=$(gh release view "$TAG" --json assets --jq ".assets[].url" 2>/dev/null | grep -i "/$asset\"" || true)
+
+            if [ -z "$DOWNLOAD_URL" ]; then
+              echo "首次上传 → $asset"
+              gh release upload "$TAG" "$asset" --clobber
+              continue
+            fi
+
+            # 下载远程资产并计算哈希（使用 GitHub API 的重定向真实地址）
+            REMOTE_HASH=$(curl -sL -H "Authorization: token $GITHUB_TOKEN" "$DOWNLOAD_URL" | sha256sum | cut -d' ' -f1)
+
+            if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+              echo "检测到变化 → 覆盖上传 $asset"
+              gh release upload "$TAG" "$asset" --clobber
+            else
+              echo "无变化 → 跳过 $asset"
+            fi
+          done
+
+          # 最后确保 Release 存在（如果之前没有任何资产，会自动创建）
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Worker $TAG" --notes "Source hash: ${{ steps.hash.outputs.full_hash }}" ${ASSETS[*]}
+
+          echo "Release $TAG 处理完成！仅上传了发生变化的文件"
