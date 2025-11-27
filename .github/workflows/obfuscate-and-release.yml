@@ -3,10 +3,10 @@ name: 混淆并创建 GitHub 发行版
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:      # 支持手动触发强制全量执行
+  workflow_dispatch:      # 手动触发强制重新混淆并覆盖发布
   schedule:
-    - cron: '0 */72 * * *'  # 可保留也可删除，已无实际作用
-
+    - cron: '0 */12 * * *'  # 可保留也可删除，已无实际作用
+    
 jobs:
   obfuscate-and-release:
     runs-on: ubuntu-latest
@@ -20,7 +20,7 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: 配置 Node.js 环境
+      - name: 配置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 'latest'
@@ -29,83 +29,75 @@ jobs:
       - name: 安装依赖
         run: |
           npm ci
-          sudo apt-get update -qq
-          sudo apt-get install -y zip jq -qq
+          sudo apt-get update -qq && sudo apt-get install -y zip jq -qq
 
-      - name: 检查备份文件并创建 _worker_temp.js
+      - name: 计算 _worker.js.backup 的哈希并生成 tag
+        id: hash
         run: |
           set -euo pipefail
-          WORKER_FILE="_worker.js"
-          BACKUP_FILE="_worker.js.backup"
-          TEMP_FILE="_worker_temp.js"
+          BACKUP="_worker.js.backup"
+          [ -f "$BACKUP" ] || { echo "Error: $BACKUP 不存在！"; exit 1; }
           
-          # 确保 _worker.js.backup 存在（这是我们唯一的源文件）
-          if [ ! -f "$BACKUP_FILE" ]; then
-            echo "Error: $BACKUP_FILE does not exist in $(pwd)"
-            ls -la
-            exit 1
-          fi
+          FULL_HASH=$(sha256sum "$BACKUP" | cut -d' ' -f1)
+          TAG="${FULL_HASH:0:12}"
           
-          # 从备份创建临时文件进行混淆
-          cp "$BACKUP_FILE" "$TEMP_FILE" || {
-            echo "Error: Failed to create $TEMP_FILE from $BACKUP_FILE"
-            exit 1
-          }
+          echo "Source file : $BACKUP"
+          echo "SHA256      : $FULL_HASH"
+          echo "Release tag : $TAG"
           
-          echo "$TEMP_FILE created successfully from $BACKUP_FILE"
-          ls -la
+          echo "full_hash=$FULL_HASH" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: 混淆代码
+      - name: 从 backup 创建临时文件并混淆
         run: |
+          cp _worker.js.backup _worker_temp.js
           npm run build -- --input _worker_temp.js --output _worker.js
-          rm -f _worker.js.temp _worker_temp.js
+          rm -f _worker_temp.js _worker.js.temp
 
-      - name: 打包为 worker.zip
+      - name: 打包 worker.zip
         run: |
           zip -j worker.zip _worker.js
 
-      - name: 提交混淆后的代码和备份
+      - name: 提交混淆后的 _worker.js 和 zip（仅当有变化时）
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add _worker.js _worker.js.backup worker.zip
+          
+          git add _worker.js worker.zip
           
           if git diff --cached --quiet; then
-            echo "没有文件变更，跳过提交"
+            echo "混淆后文件无变化，跳过 commit"
           else
-            VERSION="release-$(date +%Y%m%d-%H%M%S)"
-            git commit -m "Auto obfuscate & release (v${VERSION})"
+            git commit -m "Update obfuscated worker.js (${{ steps.hash.outputs.tag }})"
           fi
 
-      - name: Push 更改到 main 分支
+      - name: Push 到 main
         uses: ad-m/github-push-action@v0.8.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: main
 
-      - name: 创建或覆盖 GitHub Release
+      - name: 创建或覆盖 Release（同 tag 强制覆盖资产）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          TAG="${{ steps.hash.outputs.tag }}"
+          
+          echo "正在处理 Release tag: $TAG"
 
-          VERSION="release-$(date +%Y%m%d-%H%M%S)"
+          # 强制删除旧 tag（如存在），保证干净
+          git push origin :refs/tags/$TAG || true
+          git tag -f "$TAG"
+          git push -f origin "$TAG"
 
-          echo "正在为版本 $VERSION 创建/覆盖 Release..."
+          # 创建 Release
+          # 使用 --clobber 自动覆盖同名 release 的资产（gh >= 2.0 支持）
+          gh release create "$TAG" \
+            --title "Worker $TAG" \
+            --notes "Automated obfuscated release  
+          Source hash: ${{ steps.hash.outputs.full_hash }}" \
+            --clobber \
+            worker.zip _worker.js.backup || echo "Release 已存在，正在覆盖资产"
 
-          # 删除可能已存在的同名 tag
-          git push origin :refs/tags/$VERSION || true
-
-          # 创建并强制推送 tag
-          git tag -f "$VERSION"
-          git push -f origin "$VERSION"
-
-          # 创建 release 并上传资产
-          gh release create "$VERSION" \
-            --title "Worker Release $VERSION" \
-            --notes "Automated obfuscated release (local source only, no upstream sync)" \
-            --repo "${{ github.repository }}" \
-            worker.zip _worker.js.backup
-
-          echo "Release $VERSION 创建成功并上传资产完成！"
+          echo "Release $TAG 处理完成，worker.zip 已强制覆盖上传"
