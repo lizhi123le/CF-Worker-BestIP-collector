@@ -5,7 +5,7 @@ on:
     branches: [ main ]
   workflow_dispatch:      # 支持手动触发强制全量执行
   schedule:
-    - cron: '0 */11 * * *'  # 每9小时检查一次上游更新
+    - cron: '0 */72 * * *'  # 可保留也可删除，已无实际作用
 
 jobs:
   obfuscate-and-release:
@@ -20,137 +20,91 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: 检查上游 _worker.js 是否有更新
-        id: check-update
-        run: |
-          set -euo pipefail
-
-          UPSTREAM_URL="https://raw.githubusercontent.com/ethgan/CF-Worker-BestIP-collector/main/_workers.js"
-          BACKUP_FILE="_worker.js.backup"
-          HASH_FILE=".worker_hash"
-
-          echo "正在从上游拉取最新 _worker.js ..."
-          curl -fsSL "$UPSTREAM_URL" -o temp_worker.js
-
-          NEW_HASH=$(sha256sum temp_worker.js | cut -d' ' -f1)
-          OLD_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
-
-          if [ "$NEW_HASH" != "$OLD_HASH" ] || [ ! -f "$BACKUP_FILE" ]; then
-            echo "检测到上游代码更新或首次运行"
-            mv -f temp_worker.js "$BACKUP_FILE"
-            echo "$NEW_HASH" > "$HASH_FILE"
-            echo "has_update=true" >> $GITHUB_OUTPUT
-            echo "version=$NEW_HASH" >> $GITHUB_OUTPUT
-          else
-            echo "上游代码无变化，跳过后续步骤"
-            rm -f temp_worker.js
-            echo "has_update=false" >> $GITHUB_OUTPUT
-          fi
-
-      # 只有在真正有更新 或 手动触发时才执行后续步骤
       - name: 配置 Node.js 环境
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         uses: actions/setup-node@v4
         with:
           node-version: 'latest'
           cache: 'npm'
 
       - name: 安装依赖
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           npm ci
           sudo apt-get update -qq
           sudo apt-get install -y zip jq -qq
 
       - name: 检查备份文件并创建 _worker_temp.js
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           WORKER_FILE="_worker.js"
           BACKUP_FILE="_worker.js.backup"
           TEMP_FILE="_worker_temp.js"
           
-          # 确保 _worker.js.backup 存在
+          # 确保 _worker.js.backup 存在（这是我们唯一的源文件）
           if [ ! -f "$BACKUP_FILE" ]; then
             echo "Error: $BACKUP_FILE does not exist in $(pwd)"
+            ls -la
             exit 1
           fi
           
-          # 创建 _worker_temp.js 从 _worker.js.backup
+          # 从备份创建临时文件进行混淆
           cp "$BACKUP_FILE" "$TEMP_FILE" || {
             echo "Error: Failed to create $TEMP_FILE from $BACKUP_FILE"
             exit 1
           }
           
-          if [ ! -f "$TEMP_FILE" ]; then
-            echo "Error: $TEMP_FILE not found in $(pwd)"
-            exit 1
-          fi
-          
-          echo "$TEMP_FILE created successfully from $BACKUP_FILE at $(pwd)/$TEMP_FILE"
+          echo "$TEMP_FILE created successfully from $BACKUP_FILE"
           ls -la
 
       - name: 混淆代码
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           npm run build -- --input _worker_temp.js --output _worker.js
-          rm -f _worker.js.temp
+          rm -f _worker.js.temp _worker_temp.js
 
       - name: 打包为 worker.zip
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           zip -j worker.zip _worker.js
 
       - name: 提交混淆后的代码和备份
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add _worker.js _worker.js.backup .worker_hash worker.zip
+          git add _worker.js _worker.js.backup worker.zip
           
           if git diff --cached --quiet; then
             echo "没有文件变更，跳过提交"
           else
-            VERSION="${{ steps.check-update.outputs.version || 'manual' }}"
-            git commit -m "Auto update: obfuscated worker.js (v${VERSION:0:8})"
+            VERSION="release-$(date +%Y%m%d-%H%M%S)"
+            git commit -m "Auto obfuscate & release (v${VERSION})"
           fi
 
       - name: Push 更改到 main 分支
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         uses: ad-m/github-push-action@v0.8.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: main
 
-      # 只有在自动检测到更新时才创建 Release（手动触发也创建）
       - name: 创建或覆盖 GitHub Release
-        if: steps.check-update.outputs.has_update == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          # 手动触发时若无真实更新，使用 "manual" 作为版本
-          if [ "${{ steps.check-update.outputs.has_update }}" == "true" ]; then
-            VERSION="${{ steps.check-update.outputs.version }}"
-          else
-            VERSION="manual-$(date +%Y%m%d-%H%M%S)"
-          fi
+          VERSION="release-$(date +%Y%m%d-%H%M%S)"
 
           echo "正在为版本 $VERSION 创建/覆盖 Release..."
 
-          # 删除可能已存在的同名 tag（防止冲突）
+          # 删除可能已存在的同名 tag
           git push origin :refs/tags/$VERSION || true
 
-          # 创建轻量标签并推送到远程
+          # 创建并强制推送 tag
           git tag -f "$VERSION"
           git push -f origin "$VERSION"
 
-          # 使用 gh cli 创建 release（更简洁可靠）
+          # 创建 release 并上传资产
           gh release create "$VERSION" \
             --title "Worker Release $VERSION" \
-            --notes "Automated obfuscated release from ethgan/CF-Worker-BestIP-collector" \
+            --notes "Automated obfuscated release (local source only, no upstream sync)" \
             --repo "${{ github.repository }}" \
             worker.zip _worker.js.backup
 
