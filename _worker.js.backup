@@ -849,7 +849,7 @@ export default {
     return allIPs.size;
   }
   async function getIPsWithFallback(env, limit = null) {
-    const historicalData = await getRecentHistoryData(env, 10); // 最多看最近10批
+    const historicalData = await getRecentHistoryData(env, 10);
     if (historicalData.length === 0) {
       return {
         ips: [],
@@ -859,53 +859,79 @@ export default {
         originalCount: 0
       };
     }
-  
-    const latest = historicalData[0];
-    const addressMap = new Map();
+
+    const latest = historicalData[0]; // 最新批次
     const result = [];
-  
-    // Step 1: 先把最新批次的所有 IP 加入（保持其原始测速排序）
-    if (latest.ips && Array.isArray(latest.ips)) {
-      latest.ips.forEach(item => {
+    const addressMap = new Map(); // 防重
+
+    // Step 1: 优先处理最新批次
+    const latestIPs = (latest.ips || []).filter(Boolean);
+
+    // 按延迟升序排序（无延迟的排后面）
+    latestIPs.sort((a, b) => {
+      if (a.latency && b.latency) return a.latency - b.latency;
+      if (a.latency) return -1;
+      if (b.latency) return 1;
+      return 0;
+    });
+
+    // 加入最新批次的所有 IP（保持延迟排序）
+    latestIPs.forEach(item => {
+      if (!addressMap.has(item.address)) {
+        addressMap.set(item.address, true);
+        result.push(item);
+      }
+    });
+
+    const latestCount = result.length;
+
+    // Step 2: 判断是否需要补齐
+    if (limit === null || limit <= 0 || result.length >= limit) {
+      // 不限制 或 已足够 → 直接截取前 limit（如果有限制）
+      if (limit > 0 && result.length > limit) {
+        result.splice(limit);
+      }
+      return {
+        ips: result,
+        count: result.length,
+        lastUpdated: latest.lastUpdated || new Date().toISOString(),
+        sources: latest.sources || [],
+        originalCount: latest.count || latestIPs.length
+      };
+    }
+
+    // Step 3: 需要补齐（limit > 最新批次数量）
+    const need = limit - result.length;
+
+    let added = 0;
+    for (let i = 1; i < historicalData.length && added < need; i++) {
+      const batch = historicalData[i];
+      if (!batch.ips || !Array.isArray(batch.ips)) continue;
+
+      // 每个历史批次也按延迟排序后加入
+      const sortedBatch = [...batch.ips].sort((a, b) => {
+        if (a.latency && b.latency) return a.latency - b.latency;
+        if (a.latency) return -1;
+        if (b.latency) return 1;
+        return 0;
+      });
+
+      for (const item of sortedBatch) {
         if (!addressMap.has(item.address)) {
           addressMap.set(item.address, true);
           result.push(item);
-        }
-      });
-    }
-  
-    // Step 2: 如果 limit 是 null 或 0，显示最新批次全部
-    if (limit === null || limit <= 0) {
-      // 什么都不做，直接返回最新批次
-    } else if (result.length < limit) {
-      // Step 3: 不足时，从次新 → 更老的批次逐批补齐（每批保持原测速排序）
-      const need = limit - result.length;
-      let added = 0;
-  
-      for (let i = 1; i < historicalData.length && added < need; i++) {
-        const batch = historicalData[i];
-        if (!batch.ips || !Array.isArray(batch.ips)) continue;
-  
-        for (const item of batch.ips) {
-          if (!addressMap.has(item.address)) {
-            addressMap.set(item.address, true);
-            result.push(item);
-            added++;
-            if (added >= need) break;
-          }
+          added++;
+          if (added >= need) break;
         }
       }
-    } else {
-      // result.length >= limit，只取前 limit（因为最新批次已按延迟排好序）
-      result.splice(limit);
     }
-  
+
     return {
       ips: result,
       count: result.length,
       lastUpdated: latest.lastUpdated || new Date().toISOString(),
       sources: latest.sources || [],
-      originalCount: latest.count || 0
+      originalCount: latest.count || latestIPs.length
     };
   }
   /* ====================== 页面与接口 ====================== */
