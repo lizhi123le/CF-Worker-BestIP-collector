@@ -230,35 +230,35 @@ export default {
     };
   }
   /* ====================== 白名单域名（只保留这些结尾的域名） ====================== */
-  const WHITELIST_DOMAINS = new Set([
-    "cf.090227.xyz", "ct.090227.xyz", "cmcc.090227.xyz",
-    "icook.hk", "icook.tw",
-    "visa.com.hk", "visa.com.tw", "visa.com.mo", "usa.visa.com", "myanmar.visa.com",
-    "www.visa.com.hk", "www.visa.com.tw", "www.visaeurope.ch", "www.visa.com.br", "www.visasoutheasteurope.com",
-    "bestcf.030101.xyz",
-    "ashton.ns.cloudflare.com", "cris.ns.cloudflare.com", "decker.ns.cloudflare.com",
-    "dylan.ns.cloudflare.com", "lewis.ns.cloudflare.com", "huxley.ns.cloudflare.com",
-    "julio.ns.cloudflare.com", "pranab.ns.cloudflare.com", "rustam.ns.cloudflare.com",
-    "freeyx.cloudflare88.eu.org", "cloudflare-ip.mofashi.ltd", "cf.zhetengsha.eu.org",
-    "cdn.2020111.xyz", "cloudflare.182682.xyz", "cf.090227.xyz", "cnamefuckxxs.yuchen.icu",
-    "cfip.1323123.xyz", "bestcf.top", "cdn.tzpro.xyz", "cf.877771.xyz", "cf.0sm.com",
-    "xn--b6gac.eu.org", "akr.ldlbl.nyc.mn", "amclubss.com", "ipinfo.in", "ipv4.ip.sb",
-    "stock.hostmonit.com", "time.is", "www.glassdoor.com", "www.4chan.org", "www.ipget.net",
-    "www.csgo.com", "wto.org", "zula.ir", "xddsp9.app", "edge105.com", "az.baku.ws",
-    "www.militarydick.com", "www.cellspare.com", "phytokeys.pensoft.net", "sykepleiediskusjon.net",
-    "c1.ggjj.top", "yundunwawablogcdn1yd.wawacm.com", "www.yava.pw", "www.gpltimes.com",
-    "www.xinjuc.com", "www.otc-eu.com", "xn--vjq503a.cloudflare.182682.xyz", "bk.jdkg.org",
-    "www.sxivy.com", "cdn.0578.eu.org", "dediseedbox.com", "xn--mcrt9b.cloudflare.182682.xyz",
-    "www.futbin.com", "acgs.one", "yundunwawablogcdn1dx.wawacm.com", "25maoww.com",
-    "730.7ncm.com", "wnwn9.com", "dy.99294837.xyz", "mp3h.ysxs.top", "www.dafuhao.com",
-    "forums.welltrainedmind.com", "w88u65.com", "xn--nagykrs-f1a13f.cylex.hu", "www.vdtat.gov.lt"
-  ]);
+const WHITELIST_DOMAINS = [
+  "xyz", "hk", "tw", "mo", "ch", "br", "eu.org",
+  "icu", "mn", "in", "sb", "is", "org", "ir", "app",
+  "ws", "net", "pw", "one", "top", "lt", "cylex.hu",
+  "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
+  "it", "es", "ru", "se", "no", "fi", "dk", "pl", "cz", "gr",
+  "be", "nl", "ie", "nz", "mx", "ar", "cl", "tr", "sa", "ae",
+  "id", "my", "th", "vn", "ph", "bd", "pk", "lk", "np", "il",
+  "za", "ng", "ke", "tz", "gh", "eg", "ma", "dz", "tn", "qa",
+  "kw", "bh", "om", "by", "ua", "sk", "hu", "ro", "bg", "rs",
+  "info", "biz", "mobi", "name", "pro", "aero", "coop", "museum",
+  "int", "gov", "edu", "mil", "tv", "me", "io", "ai", "gg",
+  "fm", "am", "sh", "cc", "la", "bz", "vc", "sc", "ag", "gd",
+  "lc", "dm", "ht", "do", "cr", "hn", "ni", "pa", "py", "uy",
+  "bo", "ec", "pe", "ve", "co", "sr", "gy", "jm", "tt", "bb",
+  "bs", "bm", "mq", "gp", "re", "yt", "tf", "wf", "pf", "nc",
+  "pn", "tk", "to", "vu", "ki", "nr", "mh", "pg", "fj", "ck",
+  "nu", "ax", "gl", "fo", "je", "im", "gi", "mt", "cy", "lu",
+  "li", "mc", "sm", "va", "ad", "al", "ba", "mk", "md", "ge",
+  "az", "af", "ao", "bj", "bw", "cv", "et", "gm", "gn", "lr",
+  "mz", "na", "rw", "sd", "sl", "sn", "so", "ss", "ug", "zm",
+  "zw", "bt", "kh", "mm", "kp", "iq", "sy", "jo", "lb", "ps",
+  "ye", "kg", "uz", "tj", "tm", "kz", "ee", "lv"
+];
   function isWhitelistedDomain(domain) {
     if (!domain) return false;
-    if (WHITELIST_DOMAINS.has(domain)) return true;
     // 检查是否以白名单中的域名结尾
     for (const wl of WHITELIST_DOMAINS) {
-      if (domain.endsWith("." + wl) || domain === wl) return true;
+      if (domain.endsWith("." + wl)) return true;
     }
     return false;
   }
@@ -1143,12 +1143,18 @@ export default {
                     <button class="button" onclick="openSourcesModal()">⚙️ 设置来源</button>
                 </div>
                 <div class="sources" id="sources">
-                    ${data.sources ? data.sources.map(source => `
-                        <div class="source ${source.status === 'success' ? '' : 'error'}">
-                            <strong>${source.name}</strong>: 
-                            ${source.status === 'success' ? '成功获取 ' + source.count + ' 个地址' : '失败: ' + source.error}
-                        </div>
-                    `).join('') : '<p style="color: #64748b;">暂无数据来源信息</p>'}
+                    ${data.sources ? data.sources.map(source => {
+      let displayName = source.name;
+      try {
+        displayName = new URL(source.name).hostname;
+      } catch (_) {}
+      return `
+        <div class="source ${source.status === 'success' ? '' : 'error'}">
+            <strong>${displayName}</strong>: 
+            ${source.status === 'success' ? '成功获取 ' + source.count + ' 个地址' : '失败: ' + source.error}
+        </div>
+      `;
+    }).join('') : '<p style="color: #64748b;">暂无数据来源信息</p>'}
                 </div>
             </div>
           <div class="footer">
@@ -1672,24 +1678,17 @@ export default {
                           data.sources.forEach(s => sourceMap.set(s.name, s));
                       }
                       currentSourcesUrls.forEach(url => {
-                          // 截取URL显示，避免太长
-                          let displayName = url;
-                          if (displayName.length > 50) {
-                              displayName = displayName.substring(0, 47) + '...';
-                          }
-                          let name;
-                          try {
-                              name = new URL(url).hostname;
-                          } catch (e) {
-                              name = url;
-                          }
-                          const existing = sourceMap.get(url);
-                          if (existing) {
-                              sourcesDisplay.push({ ...existing, name: displayName });
-                          } else {
-                              sourcesDisplay.push({ name: displayName, status: "pending", count: 0, message: "新增站点" });
-                          }
-                      });
+    let hostname = url;
+    try {
+        hostname = new URL(url).hostname;
+    } catch (e) {}
+    const existing = sourceMap.get(url);
+    if (existing) {
+        sourcesDisplay.push({ ...existing, name: hostname });
+    } else {
+        sourcesDisplay.push({ name: hostname, status: "pending", count: 0, message: "新增站点" });
+    }
+});
                       if (sourcesDisplay.length > 0) {
                           sources.innerHTML = sourcesDisplay.map(function(s) {
                               const cls = s.status === 'success' ? '' : 'error';
