@@ -258,7 +258,7 @@ const WHITELIST_DOMAINS = [
     if (!domain) return false;
     // 检查是否以白名单中的域名结尾
     for (const wl of WHITELIST_DOMAINS) {
-      if (domain.endsWith("." + wl)) return true;
+      if (domain.endsWith("." + wl) || domain === wl) return true;
     }
     return false;
   }
@@ -700,7 +700,7 @@ const WHITELIST_DOMAINS = [
     }
     return { success: false, latency: null };
   }
-  async function batchTestLatency(addresses, concurrency = 6) {
+  async function batchTestLatency(addresses, concurrency = 5) {
     const results = new Array(addresses.length);
     for (let i = 0; i < addresses.length; i += concurrency) {
       const batch = addresses.slice(i, i + concurrency);
