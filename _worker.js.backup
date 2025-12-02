@@ -1092,6 +1092,7 @@ const WHITELIST_DOMAINS = [
               <div class="speed-test-progress" id="speed-test-progress">
                   <div class="speed-test-progress-bar" id="speed-test-progress-bar"></div>
               </div>
+			  <div style="text-align: center; margin: 8px 0; font-size: 0.9rem; color: #64748b;" id="speed-test-status">准备测速...</div>
               <div class="ip-list" id="ip-list">
                   ${data.ips && data.ips.length > 0 ? data.ips.map(item => {
                     // 确保 address 存在，使用安全默认值
@@ -1419,7 +1420,24 @@ const WHITELIST_DOMAINS = [
                       const data = await response.json();
                       const latency = performance.now() - startTime;
                       const speedElement = ipItem.querySelector('.speed-result');
-                      const addressElement = ipItem.querySelector('.ip-address');
+                      const addressElement = ipItem.querySelector('.ip-address');		  
+					  if (!addressElement) return;
+
+					  // 关键：从当前文本里提取类型角标（纯文本版）
+					  let typeBadgeText = '';
+					  if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
+					  else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
+					  else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
+
+					  // 根据类型生成完整的带样式的角标 HTML
+					  let typeBadge = '';
+					  if (typeBadgeText === 'IPv6') {
+						  typeBadge = '<span style="background:#10b981;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv6</span>';
+					  } else if (typeBadgeText === 'IPv4') {
+						  typeBadge = '<span style="background:#3b82f6;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv4</span>';
+					  } else if (typeBadgeText === '域名') {
+						  typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
+					  };
                       if (data.success) {
                           const rounded = Math.round(latency);
                           const speedClass = rounded < 200 ? 'speed-fast' : rounded < 500 ? 'speed-medium' : 'speed-slow';
