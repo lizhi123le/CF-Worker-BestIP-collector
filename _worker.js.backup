@@ -1092,7 +1092,6 @@ const WHITELIST_DOMAINS = [
               <div class="speed-test-progress" id="speed-test-progress">
                   <div class="speed-test-progress-bar" id="speed-test-progress-bar"></div>
               </div>
-              <div style="text-align: center; margin: 8px 0; font-size: 0.9rem; color: #64748b;" id="speed-test-status">准备测速...</div>
               <div class="ip-list" id="ip-list">
                   ${data.ips && data.ips.length > 0 ? data.ips.map(item => {
                     // 确保 address 存在，使用安全默认值
@@ -1330,6 +1329,23 @@ const WHITELIST_DOMAINS = [
               const testBtn = item.querySelector('.small-btn[id^="test-"]');
               const speedElement = item.querySelector('.speed-result');
               const addressElement = item.querySelector('.ip-address');
+              if (!addressElement) return;
+
+              // 关键：从当前文本里提取类型角标（纯文本版）
+              let typeBadgeText = '';
+              if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
+              else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
+              else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
+
+              // 根据类型生成完整的带样式的角标 HTML
+              let typeBadge = '';
+              if (typeBadgeText === 'IPv6') {
+                  typeBadge = '<span style="background:#10b981;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv6</span>';
+              } else if (typeBadgeText === 'IPv4') {
+                  typeBadge = '<span style="background:#3b82f6;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv4</span>';
+              } else if (typeBadgeText === '域名') {
+                  typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
+              };
               if (!testBtn || !speedElement || !addressElement) return showMessage('元素缺失，无法测速', 'error');
               testBtn.disabled = true;
               testBtn.textContent = '测试中...';
@@ -1349,7 +1365,7 @@ const WHITELIST_DOMAINS = [
                       speedElement.className = 'speed-result ' + speedClass;
                       // 安全地更新地址元素文本
                       const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
-                      addressElement.textContent = baseText + (rounded ? '_' + rounded + 'ms' : '');
+                      addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
                       showMessage('地址 ' + address + ' 测速完成: ' + rounded + 'ms');
                   } else {
                       speedElement.textContent = '失败';
@@ -1413,7 +1429,7 @@ const WHITELIST_DOMAINS = [
                           }
                           if (addressElement) {
                               const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
-                              addressElement.textContent = baseText + (rounded ? '_' + rounded + 'ms' : '');
+                              addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
                           }
                           speedResults[address] = { latency: rounded, success: true };
                       } else {
@@ -1632,7 +1648,7 @@ const WHITELIST_DOMAINS = [
                               }
                               return '<div class="ip-item" data-ip="' + address + '">\
                                   <div class="ip-info">\
-                                      <span class="ip-address">' + displayAddress + '#' + location + (latency ? '_' + Math.round(latency) + 'ms' + typeBadge : '') + '</span>\
+                                      <span class="ip-address">' + displayAddress + '#' + location + (latency ? '_' + Math.round(latency) + 'ms' : '') + typeBadge + '</span>\
                                       <span class="speed-result" id="speed-' + safeId + '">' + (latency ? Math.round(latency) + 'ms' : '-') + '</span>\
                                   </div>\
                                   <div class="action-buttons">\
