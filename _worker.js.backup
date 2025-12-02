@@ -183,14 +183,14 @@ export default {
   function formatAddressOutput(address, location, latency) {
     const parsed = parseAddressWithPort(address);
     const portPart = parsed.port !== "443" ? `:${parsed.port}` : "";
-    const latencyPart = latency ? `${Math.round(latency)}ms` : "";
+    const latencyPart = latency ? `_${Math.round(latency)}ms` : "";
     if (parsed.type === 'ipv6') {
-      return `[${parsed.address}]${portPart}#${location}_${latencyPart}`;
+      return `[${parsed.address}]${portPart}#${location}${latencyPart}`;
     } else if (parsed.type === 'domain') {
-      return `${parsed.address}${portPart}#${parsed.address}_${latencyPart}`;
+      return `${parsed.address}${portPart}#${parsed.address}${latencyPart}`;
     } else {
       // IPv4
-      return `${parsed.address}${portPart}#${location}_${latencyPart}`;
+      return `${parsed.address}${portPart}#${location}${latencyPart}`;
     }
   }
   // 解析已格式化的地址
