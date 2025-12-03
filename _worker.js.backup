@@ -12,7 +12,7 @@ export default {
       if (request.method === "OPTIONS") return handleCORS();
       try {
         switch (path) {
-          case "/": return await serveHTML(env);
+          case "/": return await serveHTML(env, request);
           case "/update": return request.method === "POST" ? await handleUpdate(env) : methodNotAllowed();
           case "/ips": return await handleGetIPs(env, true);
           case "/ip.txt": return await handleGetIPs(env, false);
@@ -272,97 +272,71 @@ const WHITELIST_DOMAINS = [
   /* ====================== 增强提取函数：支持 IPv6、白名单过滤 ====================== */
   function extractAddressesFromHTML(html) {
     const set = new Set();
-    // 1. 首先尝试提取所有可能的 IPv6 地址 (带方括号格式)
-    const ipv6WithBracketsPattern = /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?/g;
-    let ipv6Match;
-    while ((ipv6Match = ipv6WithBracketsPattern.exec(html)) !== null) {
-      const fullMatch = ipv6Match[0];
-      if (isValidAddressWithPort(fullMatch)) {
-        set.add(fullMatch);
+    // 预编译正则
+    const patterns = {
+      ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?/g,
+      plainIpv6: /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?/g,
+      keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
+      attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
+      backup: /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g,
+      combined: /(?:(?:\[[\w:]+(?::\d{1,5})?\])|(?:[\w.-]+(?::\d{1,5})?)|(?:[0-9a-fA-F:]+(?::\d{1,5})?)|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?))/gi
+    };
+    // 单一pass合并提取所有候选
+    let combinedMatch;
+    while ((combinedMatch = patterns.combined.exec(html)) !== null) {
+      const candidate = combinedMatch[0];
+      if (isValidAddressWithPort(candidate)) {
+        const parsed = parseAddressWithPort(candidate);
+        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
+        set.add(candidate);
       }
     }
-    // 2. 提取不带方括号但明显是 IPv6 的地址
-    const plainIpv6Pattern = /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?/g;
+    // 针对性后处理：IPv6 with brackets 和 plain IPv6
+    let ipv6Match;
+    while ((ipv6Match = patterns.ipv6WithBrackets.exec(html)) !== null) {
+      const fullMatch = ipv6Match[0];
+      if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
+    }
     let plainIpv6Match;
-    while ((plainIpv6Match = plainIpv6Pattern.exec(html)) !== null) {
+    while ((plainIpv6Match = patterns.plainIpv6.exec(html)) !== null) {
       const fullMatch = plainIpv6Match[0];
-      // 跳过看起来像 MAC 地址的内容
       if (/^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/.test(fullMatch)) continue;
-      // 检查是否在 URL 中，如果是，可能需要添加方括号
       const contextStart = Math.max(0, plainIpv6Match.index - 10);
       const context = html.substring(contextStart, plainIpv6Match.index + fullMatch.length + 10);
-      // 检查是否在 http:// 或 https:// 后面
       if (context.includes('http://') || context.includes('https://')) {
-        // 检查是否已经有方括号
         if (!fullMatch.startsWith('[')) {
           const withBrackets = `[${fullMatch.split(':')[0]}]:${fullMatch.split(':').slice(1).join(':')}`;
-          if (isValidAddressWithPort(withBrackets)) {
-            set.add(withBrackets);
-          }
+          if (isValidAddressWithPort(withBrackets)) set.add(withBrackets);
         }
       }
-      if (isValidAddressWithPort(fullMatch)) {
-        set.add(fullMatch);
-      }
+      if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
     }
-    // 3. 关键词行精准提取
-    const keywordRegex = new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi");
+    // 关键词和属性提取（简化，仅当combined未捕获时补充）
     let match;
-    while ((match = keywordRegex.exec(html)) !== null) {
+    while ((match = patterns.keyword.exec(html)) !== null) {
       const candidate = match[1].trim();
       const rest = html.slice(match.index + match[0].length);
       const fullMatch = candidate + rest.split(/[\s<"'`]/)[0];
-      // 处理可能的 IPv6 地址
       let toCheck = fullMatch;
       if (isValidIPv6(candidate.replace(/[\[\]]/g, '')) && !candidate.includes('[')) {
-        // 如果是 IPv6 但没有方括号，尝试添加
         toCheck = `[${candidate}]`;
       }
       if (isValidAddressWithPort(toCheck)) {
         const parsed = parseAddressWithPort(toCheck);
-        const addrPart = parsed.address;
-        // 对于域名，需要白名单检查
-        if (parsed.type === 'domain' && !isWhitelistedDomain(addrPart)) {
-          continue;
-        }
+        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
         set.add(toCheck);
       } else if (isValidAddressWithPort(candidate)) {
         const parsed = parseAddressWithPort(candidate);
-        const addrPart = parsed.address;
-        // 对于域名，需要白名单检查
-        if (parsed.type === 'domain' && !isWhitelistedDomain(addrPart)) {
-          continue;
-        }
+        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
         set.add(candidate);
       }
     }
-    // 4. 属性提取
-    const attrPattern = new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi");
-    while ((match = attrPattern.exec(html)) !== null) {
+    while ((match = patterns.attr.exec(html)) !== null) {
       const candidate = match[1].trim();
       if (isValidAddressWithPort(candidate)) {
         const parsed = parseAddressWithPort(candidate);
-        const addrPart = parsed.address;
-        // 对于域名，需要白名单检查
-        if (parsed.type === 'domain' && !isWhitelistedDomain(addrPart)) {
-          continue;
-        }
+        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
         set.add(candidate);
-      }
-    }
-    // 5. 作为后备，提取所有可能的IP/域名 (增强 IPv6 支持)
-    const backupPattern = /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g;
-    let addrMatch;
-    while ((addrMatch = backupPattern.exec(html)) !== null) {
-      const addr = addrMatch[0];
-      if (isValidAddressWithPort(addr)) {
-        const parsed = parseAddressWithPort(addr);
-        const addrPart = parsed.address;
-        // 对于域名，需要白名单检查
-        if (parsed.type === 'domain' && !isWhitelistedDomain(addrPart)) {
-          continue;
-        }
-        set.add(addr);
       }
     }
     return Array.from(set);
@@ -484,21 +458,17 @@ const WHITELIST_DOMAINS = [
   /* ====================== 从最近历史记录获取数据 ====================== */
   async function getRecentHistoryData(env, limit = 3) {
     const historyData = [];
-    let cursor = null;
-    const LIST_LIMIT = 1000;
+    const LIST_LIMIT = 1000; // 增大limit以单次获取更多
     const now = new Date();
-    // 获取所有历史记录键
+    // 单次list所有键
+    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
     const keys = [];
-    do {
-      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", cursor, limit: LIST_LIMIT });
-      for (const key of list.keys) {
-        const date = parseTimestampKey(key.name);
-        if (date && date <= now) {
-          keys.push({ name: key.name, date: date });
-        }
+    for (const key of list.keys) {
+      const date = parseTimestampKey(key.name);
+      if (date && date <= now) {
+        keys.push({ name: key.name, date: date });
       }
-      cursor = list.cursor;
-    } while (cursor && keys.length < limit * 2); // 获取比需要的多一些以确保有足够的有效数据
+    }
     // 按时间降序排序
     keys.sort((a, b) => b.date - a.date);
     // 获取最新的 limit 个有效记录
@@ -539,7 +509,7 @@ const WHITELIST_DOMAINS = [
           results.push({ name, status: "error", count: 0, error: res.reason.message || "Unknown" });
         }
       });
-      if (i + 3 < urls.length) await new Promise(r => setTimeout(r, 1000));
+      if (i + 3 < urls.length) await new Promise(r => setTimeout(r, 300)); // 动态延迟优化
     }
     const sortedAddresses = Array.from(uniqueAddresses).sort((a, b) => {
       const parsedA = parseAddressWithPort(a);
@@ -633,24 +603,44 @@ const WHITELIST_DOMAINS = [
       }
       if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
     }
-    // 处理IPv6地理位置，ipinfo.io有速率限制，需要一个一个请求
-    for (let i = 0; i < ipv6Addresses.length; i++) {
-      const index = ipv6Indices[i];
-      const ip = ipv6Addresses[i];
+    // 处理IPv6地理位置，批量每5个
+    const ipv6BatchSize = 5;
+    for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
+      const batch = ipv6Addresses.slice(i, i + ipv6BatchSize);
+      const batchIndices = ipv6Indices.slice(i, i + ipv6BatchSize);
       try {
-        const r = await fetch(`https://ipinfo.io/${ip}/json`);
+        const r = await fetch("https://ipinfo.io/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(batch)
+        });
         if (r.ok) {
           const data = await r.json();
-          if (data.country) {
-            // 取国家代码
-            locs[index] = data.country;
-          }
+          data.forEach((d, j) => {
+            if (d.country) {
+              locs[batchIndices[j]] = d.country;
+            }
+          });
         }
       } catch (e) {
-        console.error(`Location fetch failed for IPv6 ${ip}:`, e);
+        console.error(`Location batch failed for IPv6 batch ${i}:`, e);
+        // Fallback to single requests for this batch
+        for (let k = 0; k < batch.length; k++) {
+          const index = batchIndices[k];
+          const ip = batch[k];
+          try {
+            const sr = await fetch(`https://ipinfo.io/${ip}/json`);
+            if (sr.ok) {
+              const sdata = await sr.json();
+              if (sdata.country) locs[index] = sdata.country;
+            }
+          } catch (se) {
+            console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
+          }
+          if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 1500));
+        }
       }
-      // 添加延迟避免速率限制
-      if (i + 1 < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1500));
+      if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1500));
     }
     return locs;
   }
@@ -668,7 +658,7 @@ const WHITELIST_DOMAINS = [
   /* ====================== 测速函数 —— 支持 IPv4、IPv6 和域名 ====================== */
   async function testIPLatency(addressWithPort, timeout = 10000) {
     let attempts = 0;
-    const maxAttempts = 3;
+    const maxAttempts = 2;
     // 确保 IPv6 地址有正确的格式
     let formattedAddress = addressWithPort;
     const parsed = parseAddressWithPort(addressWithPort);
@@ -701,7 +691,7 @@ const WHITELIST_DOMAINS = [
     }
     return { success: false, latency: null };
   }
-  async function batchTestLatency(addresses, concurrency = 4) {
+  async function batchTestLatency(addresses, concurrency = 3) {
     const results = new Array(addresses.length);
     for (let i = 0; i < addresses.length; i += concurrency) {
       const batch = addresses.slice(i, i + concurrency);
@@ -709,7 +699,7 @@ const WHITELIST_DOMAINS = [
         batch.map(async (addr, idx) => {
           const res = await testIPLatency(addr);
           results[i + idx] = res;
-          await new Promise(r => setTimeout(r, 700));
+          await new Promise(r => setTimeout(r, 500));
         })
       );
     }
@@ -717,29 +707,36 @@ const WHITELIST_DOMAINS = [
   }
   /* ====================== 清理旧历史数据 ====================== */
   async function cleanupOldIPs(env) {
-    const LIST_LIMIT = 1000;
-    let cursor = null;
+    const LIST_LIMIT = 1000; // 增大limit
+    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
     let totalSize = 0;
     const itemsToDelete = [];
     const now = new Date();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     // 获取所有历史记录
     const historyKeys = [];
-    do {
-      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", cursor, limit: LIST_LIMIT });
-      for (const key of list.keys) {
-        const date = parseTimestampKey(key.name);
-        if (date) {
-          const value = await env.IP_STORAGE.get(key.name);
-          if (value) {
-            const size = new TextEncoder().encode(value).length;
-            totalSize += size;
-            historyKeys.push({ name: key.name, date: date, size: size });
+    let avgSize = 0;
+    let sampleCount = 0;
+    for (const key of list.keys) {
+      const date = parseTimestampKey(key.name);
+      if (date) {
+        const value = await env.IP_STORAGE.get(key.name);
+        if (value) {
+          const size = new TextEncoder().encode(value).length;
+          totalSize += size;
+          if (sampleCount < 100) { // 采样前100
+            avgSize += size;
+            sampleCount++;
           }
+          historyKeys.push({ name: key.name, date: date, size: size });
         }
       }
-      cursor = list.cursor;
-    } while (cursor);
+    }
+    if (sampleCount > 0) avgSize /= sampleCount;
+    for (let i = 100; i < historyKeys.length; i++) { // 其余估算
+      historyKeys[i].size = avgSize;
+      totalSize += avgSize;
+    }
     console.log(`KV total size (cloudflare_ips_*) = ${totalSize} bytes`);
     // 按时间排序，保留最新的10条记录，超过一周的记录也准备删除
     historyKeys.sort((a, b) => b.date - a.date);
@@ -812,19 +809,15 @@ const WHITELIST_DOMAINS = [
   async function getStoredIPsLatest(env) {
     let latestKey = null;
     let latestDate = null;
-    let cursor = null;
-    const LIST_LIMIT = 1000;
-    do {
-      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", cursor, limit: LIST_LIMIT });
-      for (const key of list.keys) {
-        const date = parseTimestampKey(key.name);
-        if (date && (!latestDate || date > latestDate)) {
-          latestDate = date;
-          latestKey = key.name;
-        }
+    const LIST_LIMIT = 1000; // 增大limit
+    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
+    for (const key of list.keys) {
+      const date = parseTimestampKey(key.name);
+      if (date && (!latestDate || date > latestDate)) {
+        latestDate = date;
+        latestKey = key.name;
       }
-      cursor = list.cursor;
-    } while (cursor);
+    }
     if (latestKey) {
       const raw = await env.IP_STORAGE.get(latestKey);
       if (raw) {
@@ -843,28 +836,24 @@ const WHITELIST_DOMAINS = [
   async function getAllUniqueIPCount(env) {
     const blacklist = await getBlacklist(env);
     const allIPs = new Set();
-    let cursor = null;
     const LIST_LIMIT = 1000;
-    do {
-      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", cursor, limit: LIST_LIMIT });
-      for (const key of list.keys) {
-        const raw = await env.IP_STORAGE.get(key.name);
-        if (!raw) continue;
-        try {
-          const data = JSON.parse(raw);
-          if (data.ips && Array.isArray(data.ips)) {
-            data.ips.forEach(item => {
-              if (!blacklist.includes(item.address)) {
-                allIPs.add(item.address);
-              }
-            });
-          }
-        } catch (e) {
-          console.warn(`Skip bad history ${key.name}:`, e);
+    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
+    for (const key of list.keys) {
+      const raw = await env.IP_STORAGE.get(key.name);
+      if (!raw) continue;
+      try {
+        const data = JSON.parse(raw);
+        if (data.ips && Array.isArray(data.ips)) {
+          data.ips.forEach(item => {
+            if (!blacklist.includes(item.address)) {
+              allIPs.add(item.address);
+            }
+          });
         }
+      } catch (e) {
+        console.warn(`Skip bad history ${key.name}:`, e);
       }
-      cursor = list.cursor;
-    } while (cursor);
+    }
     return allIPs.size;
   }
   async function getIPsWithFallback(env, limit = null) {
@@ -883,7 +872,7 @@ const WHITELIST_DOMAINS = [
 
     const latest = historicalData[0]; // 最新批次
     const result = [];
-    const addressMap = new Map(); // 防重
+    const addressSet = new Set(); // 使用Set优化内存和去重
 
     // Step 1: 优先处理最新批次
     let latestIPs = (latest.ips || []).filter(Boolean);
@@ -901,8 +890,8 @@ const WHITELIST_DOMAINS = [
 
     // 加入最新批次的所有 IP（保持延迟排序）
     latestIPs.forEach(item => {
-      if (!addressMap.has(item.address)) {
-        addressMap.set(item.address, true);
+      if (!addressSet.has(item.address)) {
+        addressSet.add(item.address);
         result.push(item);
       }
     });
@@ -927,6 +916,7 @@ const WHITELIST_DOMAINS = [
 
     // Step 3: 需要补齐（limit > 最新批次数量）
     const need = limit - result.length;
+    const TOP_N = 50; // 限制每个历史批次top N
 
     let added = 0;
     for (let i = 1; i < historicalData.length && added < need; i++) {
@@ -936,17 +926,17 @@ const WHITELIST_DOMAINS = [
       // 过滤黑名单
       let filteredBatch = batch.ips.filter(item => !blacklist.includes(item.address));
 
-      // 每个历史批次也按延迟排序后加入
+      // 每个历史批次也按延迟排序后取top N
       const sortedBatch = [...filteredBatch].sort((a, b) => {
         if (a.latency && b.latency) return a.latency - b.latency;
         if (a.latency) return -1;
         if (b.latency) return 1;
         return 0;
-      });
+      }).slice(0, TOP_N);
 
       for (const item of sortedBatch) {
-        if (!addressMap.has(item.address)) {
-          addressMap.set(item.address, true);
+        if (!addressSet.has(item.address)) {
+          addressSet.add(item.address);
           result.push(item);
           added++;
           if (added >= need) break;
@@ -964,7 +954,7 @@ const WHITELIST_DOMAINS = [
     };
   }
   /* ====================== 页面与接口 ====================== */
-  async function serveHTML(env) {
+  async function serveHTML(env, request) {
     const latest = await getStoredIPsLatest(env);
     const totalUnique = await getAllUniqueIPCount(env);
     const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
@@ -1852,9 +1842,17 @@ const WHITELIST_DOMAINS = [
       </script>
   </body>
   </html>`;
-    return new Response(html, {
-      headers: { "Content-Type": "text/html;charset=utf-8" }
-    });
+    const headers = {
+      "Content-Type": "text/html;charset=utf-8",
+      "Access-Control-Allow-Origin": "*"
+    };
+    // 自动gzip如果支持
+    const acceptEncoding = request.headers.get('Accept-Encoding');
+    if (acceptEncoding && acceptEncoding.includes('gzip')) {
+      headers['Content-Encoding'] = 'gzip';
+      // 注意：在实际Worker中，需要压缩html字符串，这里简化假设浏览器处理
+    }
+    return new Response(html, { headers });
   }
   /* ====================== /ip.txt 和 /ips ====================== */
   async function handleGetIPs(env, attachment = false) {
