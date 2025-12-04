@@ -151,31 +151,38 @@ export default {
       const ipv6End = address.indexOf(']');
       addrPart = address.substring(1, ipv6End);
       portPart = address.substring(ipv6End + 2) || "443";
+      if (!isValidIPv6(addrPart)) return { address: address, port: "443", type: 'unknown' };
       return { address: addrPart, port: portPart, type: 'ipv6' };
     }
     // 处理常规地址
     const parts = address.split(':');
     // IPv6 地址没有端口 (没有方括号)
     if (parts.length > 2 && !address.includes('[')) {
+      if (!isValidIPv6(address)) return { address: address, port: "443", type: 'unknown' };
       return { address: address, port: "443", type: 'ipv6' };
     }
     // IPv4 或域名
     if (parts.length === 1) {
       addrPart = parts[0];
+      const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
+      if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
       return { 
         address: addrPart.replace(/[\[\]]/g, ''), 
         port: "443", 
-        type: isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : 'domain')
+        type: type
       };
     }
     // 域名:port 或 IPv4:port
     if (parts.length === 2) {
       addrPart = parts[0];
       portPart = parts[1];
+      if (!isValidPort(portPart)) return { address: address, port: "443", type: 'unknown' };
+      const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
+      if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
       return { 
         address: addrPart.replace(/[\[\]]/g, ''), 
         port: portPart, 
-        type: isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : 'domain')
+        type: type
       };
     }
     return { address: address, port: "443", type: 'unknown' };
@@ -232,10 +239,10 @@ export default {
   }
   /* ====================== 白名单域名（只保留这些结尾的域名） ====================== */
 const WHITELIST_DOMAINS = [
-  "xyz", "hk", "tw", "mo", "ch", "br", "eu.org",
+  "xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org",
   "icu", "mn", "in", "sb", "is", "org", "ir", "app",
   "ws", "net", "pw", "one", "top", "lt", "cylex.hu",
-  "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
+  "cn", "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
   "it", "es", "ru", "se", "no", "fi", "dk", "pl", "cz", "gr",
   "be", "nl", "ie", "nz", "mx", "ar", "cl", "tr", "sa", "ae",
   "id", "my", "th", "vn", "ph", "bd", "pk", "lk", "np", "il",
@@ -255,11 +262,13 @@ const WHITELIST_DOMAINS = [
   "zw", "bt", "kh", "mm", "kp", "iq", "sy", "jo", "lb", "ps",
   "ye", "kg", "uz", "tj", "tm", "kz", "ee", "lv"
 ];
+  // 优化：使用 Set 加速域名后缀检查（O(1) 平均）
+  const WHITELIST_SET = new Set(WHITELIST_DOMAINS.map(d => "." + d));
   function isWhitelistedDomain(domain) {
     if (!domain) return false;
     // 检查是否以白名单中的域名结尾
-    for (const wl of WHITELIST_DOMAINS) {
-      if (domain.endsWith("." + wl) || domain === wl) return true;
+    for (const wl of WHITELIST_SET) {
+      if (domain.endsWith(wl) || domain === wl.slice(1)) return true;
     }
     return false;
   }
@@ -300,7 +309,9 @@ const WHITELIST_DOMAINS = [
     let plainIpv6Match;
     while ((plainIpv6Match = patterns.plainIpv6.exec(html)) !== null) {
       const fullMatch = plainIpv6Match[0];
-      if (/^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/.test(fullMatch)) continue;
+      // 优化：用 isValidIPv6 验证所有捕获，移除特定 continue
+      const cleanIp = fullMatch.replace(/:\d+$/, '');
+      if (!isValidIPv6(cleanIp)) continue;
       const contextStart = Math.max(0, plainIpv6Match.index - 10);
       const context = html.substring(contextStart, plainIpv6Match.index + fullMatch.length + 10);
       if (context.includes('http://') || context.includes('https://')) {
@@ -340,6 +351,27 @@ const WHITELIST_DOMAINS = [
       }
     }
     return Array.from(set);
+  }
+  /* ====================== 增强黑名单过滤函数 ====================== */
+  function isBlacklisted(address, blacklist) {
+    if (!blacklist || blacklist.length === 0) return false;
+    const parsedAddress = parseAddressWithPort(address);
+    const addressBase = parsedAddress.address; // 基础地址（不带端口）
+    for (const item of blacklist) {
+      if (item.startsWith('"') && item.endsWith('"')) {
+        // 引号包围：视为域名模式，过滤子域名
+        const domain = item.slice(1, -1).trim();
+        if (parsedAddress.type === 'domain' && (addressBase === domain || addressBase.endsWith('.' + domain))) {
+          return true;
+        }
+      } else {
+        // 无引号：精确匹配整个地址（包括端口，如果有）
+        if (item === address) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
   /* ====================== 核心：更新 + 自动测速 ====================== */
   async function handleUpdate(env) {
@@ -658,7 +690,7 @@ const WHITELIST_DOMAINS = [
   /* ====================== 测速函数 —— 支持 IPv4、IPv6 和域名 ====================== */
   async function testIPLatency(addressWithPort, timeout = 10000) {
     let attempts = 0;
-    const maxAttempts = 2;
+    const maxAttempts = 3;
     // 确保 IPv6 地址有正确的格式
     let formattedAddress = addressWithPort;
     const parsed = parseAddressWithPort(addressWithPort);
@@ -691,7 +723,7 @@ const WHITELIST_DOMAINS = [
     }
     return { success: false, latency: null };
   }
-  async function batchTestLatency(addresses, concurrency = 3) {
+  async function batchTestLatency(addresses, concurrency = 6) {
     const results = new Array(addresses.length);
     for (let i = 0; i < addresses.length; i += concurrency) {
       const batch = addresses.slice(i, i + concurrency);
@@ -707,41 +739,34 @@ const WHITELIST_DOMAINS = [
   }
   /* ====================== 清理旧历史数据 ====================== */
   async function cleanupOldIPs(env) {
-    const LIST_LIMIT = 1000; // 增大limit
-    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
+    const LIST_LIMIT = 100; // 优化：减小limit以分页，避免单次过多
+    let cursor = null;
+    const historyKeys = [];
     let totalSize = 0;
-    const itemsToDelete = [];
     const now = new Date();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    // 获取所有历史记录
-    const historyKeys = [];
-    let avgSize = 0;
-    let sampleCount = 0;
-    for (const key of list.keys) {
-      const date = parseTimestampKey(key.name);
-      if (date) {
-        const value = await env.IP_STORAGE.get(key.name);
-        if (value) {
-          const size = new TextEncoder().encode(value).length;
-          totalSize += size;
-          if (sampleCount < 100) { // 采样前100
-            avgSize += size;
-            sampleCount++;
+    // 分页获取所有历史记录
+    do {
+      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT, cursor });
+      for (const key of list.keys) {
+        const date = parseTimestampKey(key.name);
+        if (date) {
+          const value = await env.IP_STORAGE.get(key.name);
+          if (value) {
+            const size = new TextEncoder().encode(value).length;
+            totalSize += size;
+            historyKeys.push({ name: key.name, date: date, size: size });
           }
-          historyKeys.push({ name: key.name, date: date, size: size });
         }
       }
-    }
-    if (sampleCount > 0) avgSize /= sampleCount;
-    for (let i = 100; i < historyKeys.length; i++) { // 其余估算
-      historyKeys[i].size = avgSize;
-      totalSize += avgSize;
-    }
+      cursor = list.cursor;
+    } while (cursor);
     console.log(`KV total size (cloudflare_ips_*) = ${totalSize} bytes`);
     // 按时间排序，保留最新的10条记录，超过一周的记录也准备删除
     historyKeys.sort((a, b) => b.date - a.date);
     // 保留最新的10条记录
     const keepCount = 10;
+    const itemsToDelete = [];
     for (let i = keepCount; i < historyKeys.length; i++) {
       if (historyKeys[i].date <= oneWeekAgo) {
         itemsToDelete.push(historyKeys[i].name);
@@ -845,7 +870,7 @@ const WHITELIST_DOMAINS = [
         const data = JSON.parse(raw);
         if (data.ips && Array.isArray(data.ips)) {
           data.ips.forEach(item => {
-            if (!blacklist.includes(item.address)) {
+            if (item && item.address && !isBlacklisted(item.address, blacklist)) {
               allIPs.add(item.address);
             }
           });
@@ -875,10 +900,10 @@ const WHITELIST_DOMAINS = [
     const addressSet = new Set(); // 使用Set优化内存和去重
 
     // Step 1: 优先处理最新批次
-    let latestIPs = (latest.ips || []).filter(Boolean);
+    let latestIPs = (latest.ips || []).filter(item => item && item.address); // 优化：确保item存在
 
-    // 过滤黑名单
-    latestIPs = latestIPs.filter(item => !blacklist.includes(item.address));
+    // 过滤黑名单（使用增强过滤）
+    latestIPs = latestIPs.filter(item => !isBlacklisted(item.address, blacklist));
 
     // 按延迟升序排序（无延迟的排后面）
     latestIPs.sort((a, b) => {
@@ -923,8 +948,8 @@ const WHITELIST_DOMAINS = [
       const batch = historicalData[i];
       if (!batch.ips || !Array.isArray(batch.ips)) continue;
 
-      // 过滤黑名单
-      let filteredBatch = batch.ips.filter(item => !blacklist.includes(item.address));
+      // 过滤黑名单（使用增强过滤）
+      let filteredBatch = batch.ips.filter(item => item && item.address && !isBlacklisted(item.address, blacklist)); // 优化：确保item存在
 
       // 每个历史批次也按延迟排序后取top N
       const sortedBatch = [...filteredBatch].sort((a, b) => {
@@ -1117,8 +1142,8 @@ const WHITELIST_DOMAINS = [
                   ${data.ips && data.ips.length > 0 ? data.ips.map(item => {
                     // 确保 address 存在，使用安全默认值
                     const address = item?.address || 'unknown';
-                    // 针对特殊字符创建安全ID
-                    const safeId = address.replace(/[:.\[\]]/g, '_');
+                    // 优化：用 btoa 作为 safeId，避免特殊字符
+                    const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
                     let typeBadge = '';
                     // 添加类型角标
                     const parsed = parseAddressWithPort(address);
@@ -1205,7 +1230,7 @@ const WHITELIST_DOMAINS = [
           <div class="modal-content">
               <h3>⚙️ 设置数据来源</h3>
               <p>编辑来源 URL，每行一个。保存后将使用这些来源更新 IP/域名。</p>
-              <textarea id="sources-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${(data.sources_urls || []).map(url => encodeURIComponent(url)).join('\\n')}</textarea>
+              <textarea id="sources-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${(data.sources_urls || []).join('\\n')}</textarea>
               <div class="modal-buttons">
                   <button class="button button-secondary" onclick="closeSourcesModal()">取消</button>
                   <button class="button button-success" onclick="saveSources()">保存</button>
@@ -1216,7 +1241,8 @@ const WHITELIST_DOMAINS = [
           <div class="modal-content">
               <h3>◼️ 黑名单管理</h3>
               <p>输入需要排除的 IPv4/IPv6/域名 地址，每行一个。保存后将在所有页面中过滤这些地址。</p>
-              <textarea id="blacklist-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;"></textarea>
+              <p><strong>增强功能：</strong> 用双引号包围域名（如 "example.com"）将过滤所有该域名的子域名（如 sub.example.com）。</p>
+              <textarea id="blacklist-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${data.blacklist.join('\\n')}</textarea>
               <div class="modal-buttons">
                   <button class="button button-secondary" onclick="closeBlacklistModal()">取消</button>
                   <button class="button button-success" onclick="saveBlacklist()">保存</button>
@@ -1622,7 +1648,7 @@ const WHITELIST_DOMAINS = [
               const modal = document.getElementById('sources-modal');
               const textarea = document.getElementById('sources-textarea');
               if (!modal || !textarea) return;
-              textarea.value = decodeURIComponent(currentSourcesUrls.join('\\n'));
+              textarea.value = currentSourcesUrls.join('\\n');
               modal.style.display = 'flex';
           }
           function closeSourcesModal() {
@@ -1632,7 +1658,7 @@ const WHITELIST_DOMAINS = [
           async function saveSources() {
               const textarea = document.getElementById('sources-textarea');
               if (!textarea) return;
-              const sources = textarea.value.split('\\n').map(s => s.trim()).filter(s => s).map(s => decodeURIComponent(s));
+              const sources = textarea.value.split('\\n').map(s => s.trim()).filter(s => s);
               try {
                   const response = await fetch('/set-sources', {
                       method: 'POST',
@@ -1705,7 +1731,7 @@ const WHITELIST_DOMAINS = [
                           ipList.innerHTML = displayIPs.map(function(item) {
                               // 确保 address 存在
                               const address = item?.address || 'unknown';
-                              const safeId = address.replace(/[:.\[\]]/g, '_');
+                              const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
                               const location = item?.location || '未知';
                               const latency = item?.latency;
                               // 添加类型角标
@@ -1750,7 +1776,7 @@ const WHITELIST_DOMAINS = [
                               if (address) {
                                   if (latency) {
                                       speedResults[address] = { latency: latency, success: true };
-                                      const safeId = address.replace(/[:.\[\]]/g, '_');
+                                      const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
                                       const el = document.getElementById('speed-' + safeId);
                                       if (el) {
                                           const cls = latency < 200 ? 'speed-fast' : latency < 500 ? 'speed-medium' : 'speed-slow';
