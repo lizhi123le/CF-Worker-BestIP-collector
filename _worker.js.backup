@@ -352,25 +352,40 @@ const WHITELIST_DOMAINS = [
     }
     return Array.from(set);
   }
-  /* ====================== 增强黑名单过滤函数 ====================== */
-  function isBlacklisted(address, blacklist) {
-    if (!blacklist || blacklist.length === 0) return false;
+  /* ====================== 优化黑名单过滤函数 ====================== */
+  // 预处理黑名单：精确匹配用Set（O(1)查找），域名模式用Set（endsWith检查）
+  function preprocessBlacklist(blacklist) {
+    if (!blacklist || blacklist.length === 0) return { exactSet: new Set(), domainSet: new Set() };
+    const exactSet = new Set();
+    const domainSet = new Set();
+    blacklist.forEach(item => {
+      if (item.startsWith('"') && item.endsWith('"')) {
+        const domain = item.slice(1, -1).trim();
+        if (domain) domainSet.add(domain);
+      } else {
+        exactSet.add(item);
+      }
+    });
+    return { exactSet, domainSet };
+  }
+
+  // 优化后的黑名单检查：O(1)精确匹配 + O(n)域名检查（n=黑名单大小，通常小）
+  function isBlacklisted(address, blacklistPreprocessed) {
+    const { exactSet, domainSet } = blacklistPreprocessed;
+    if (exactSet.has(address)) return true;
+
     const parsedAddress = parseAddressWithPort(address);
     const addressBase = parsedAddress.address; // 基础地址（不带端口）
-    for (const item of blacklist) {
-      if (item.startsWith('"') && item.endsWith('"')) {
-        // 引号包围：视为域名模式，过滤子域名
-        const domain = item.slice(1, -1).trim();
-        if (parsedAddress.type === 'domain' && (addressBase === domain || addressBase.endsWith('.' + domain))) {
-          return true;
-        }
-      } else {
-        // 无引号：精确匹配整个地址（包括端口，如果有）
-        if (item === address) {
+
+    // 只对域名类型检查子域名模式
+    if (parsedAddress.type === 'domain' && domainSet.size > 0) {
+      for (const domain of domainSet) {
+        if (addressBase === domain || addressBase.endsWith('.' + domain)) {
           return true;
         }
       }
     }
+
     return false;
   }
   /* ====================== 核心：更新 + 自动测速 ====================== */
@@ -636,7 +651,7 @@ const WHITELIST_DOMAINS = [
       if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
     }
     // 处理IPv6地理位置，批量每5个
-    const ipv6BatchSize = 5;
+    const ipv6BatchSize = 4;
     for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
       const batch = ipv6Addresses.slice(i, i + ipv6BatchSize);
       const batchIndices = ipv6Indices.slice(i, i + ipv6BatchSize);
@@ -669,10 +684,10 @@ const WHITELIST_DOMAINS = [
           } catch (se) {
             console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
           }
-          if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 1500));
+          if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 3000));
         }
       }
-      if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1500));
+      if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 2000));
     }
     return locs;
   }
@@ -690,7 +705,7 @@ const WHITELIST_DOMAINS = [
   /* ====================== 测速函数 —— 支持 IPv4、IPv6 和域名 ====================== */
   async function testIPLatency(addressWithPort, timeout = 10000) {
     let attempts = 0;
-    const maxAttempts = 3;
+    const maxAttempts = 1;
     // 确保 IPv6 地址有正确的格式
     let formattedAddress = addressWithPort;
     const parsed = parseAddressWithPort(addressWithPort);
@@ -723,7 +738,7 @@ const WHITELIST_DOMAINS = [
     }
     return { success: false, latency: null };
   }
-  async function batchTestLatency(addresses, concurrency = 6) {
+  async function batchTestLatency(addresses, concurrency = 4) {
     const results = new Array(addresses.length);
     for (let i = 0; i < addresses.length; i += concurrency) {
       const batch = addresses.slice(i, i + concurrency);
@@ -738,63 +753,83 @@ const WHITELIST_DOMAINS = [
     return results;
   }
   /* ====================== 清理旧历史数据 ====================== */
-  async function cleanupOldIPs(env) {
-    const LIST_LIMIT = 100; // 优化：减小limit以分页，避免单次过多
-    let cursor = null;
-    const historyKeys = [];
-    let totalSize = 0;
-    const now = new Date();
-    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    // 分页获取所有历史记录
-    do {
-      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT, cursor });
-      for (const key of list.keys) {
-        const date = parseTimestampKey(key.name);
-        if (date) {
-          const value = await env.IP_STORAGE.get(key.name);
-          if (value) {
-            const size = new TextEncoder().encode(value).length;
-            totalSize += size;
-            historyKeys.push({ name: key.name, date: date, size: size });
-          }
-        }
-      }
-      cursor = list.cursor;
-    } while (cursor);
-    console.log(`KV total size (cloudflare_ips_*) = ${totalSize} bytes`);
-    // 按时间排序，保留最新的10条记录，超过一周的记录也准备删除
-    historyKeys.sort((a, b) => b.date - a.date);
-    // 保留最新的10条记录
-    const keepCount = 10;
-    const itemsToDelete = [];
-    for (let i = keepCount; i < historyKeys.length; i++) {
-      if (historyKeys[i].date <= oneWeekAgo) {
-        itemsToDelete.push(historyKeys[i].name);
-      }
+async function cleanupOldIPs(env) {
+  const LIST_LIMIT = 100;
+  let cursor = null;
+  const historyItems = []; // { name, date, size }
+  let totalSize = 0;
+  const now = Date.now();
+  const oneWeekAgo = now - 2 * 24 * 60 * 60 * 1000; // 改成真正的 2 天
+
+  // 第一步：分页读取所有 key 并计算大小
+  do {
+    const list = await env.IP_STORAGE.list({
+      prefix: "cloudflare_ips_",
+      limit: LIST_LIMIT,
+      cursor
+    });
+
+    // 并行获取值并计算大小（加速）
+    const fetchPromises = list.keys.map(async (key) => {
+      const date = parseTimestampKey(key.name);
+      if (!date) return null;
+
+      const value = await env.IP_STORAGE.get(key.name);
+      if (!value) return null;
+
+      const size = new TextEncoder().encode(value).length;
+      return { name: key.name, date, size };
+    });
+
+    const items = (await Promise.all(fetchPromises)).filter(Boolean);
+    for (const item of items) {
+      historyItems.push(item);
+      totalSize += item.size;
     }
-    // 如果总大小超过3.2MB，删除更多旧记录
-    if (totalSize > 3_200_000) {
-      // 从旧到新排序，准备删除最旧的记录
-      historyKeys.sort((a, b) => a.date - b.date);
-      let currentSize = totalSize;
-      let index = 0;
-      while (currentSize > 3_000_000 && index < historyKeys.length - keepCount) {
-        if (!itemsToDelete.includes(historyKeys[index].name)) {
-          itemsToDelete.push(historyKeys[index].name);
-          currentSize -= historyKeys[index].size;
-        }
-        index++;
-      }
-    }
-    if (itemsToDelete.length > 0) {
-      console.log(`Cleaning up: ${itemsToDelete.length} old entries`);
-      const batches = [];
-      for (let i = 0; i < itemsToDelete.length; i += 10) {
-        batches.push(itemsToDelete.slice(i, i + 10));
-      }
-      await Promise.all(batches.map(batch => env.IP_STORAGE.delete(batch)));
+
+    cursor = list.cursor;
+  } while (cursor);
+
+  console.log(`KV total size (cloudflare_ips_*) = ${totalSize} bytes`);
+  if (historyItems.length <= 10) {
+    console.log("少于10条记录，无需清理");
+    return;
+  }
+
+  // 按时间降序（新→旧）
+  historyItems.sort((a, b) => b.date - a.date);
+
+  const toDelete = new Set();
+
+  // 规则1：超过7天的直接删除（即使在前10条之外）
+  for (let i = 10; i < historyItems.length; i++) {
+    if (historyItems[i].date <= oneWeekAgo) {
+      toDelete.add(historyItems[i].name);
     }
   }
+
+  // 规则2：总大小超 1MB，继续删最旧的，直到 < 1MB（保留至少10条最新）
+  let currentSize = totalSize;
+  for (let i = historyItems.length - 1; i >= 10; i--) { // 从最旧的开始删
+    if (currentSize <= 1_000_000) break;
+
+    const item = historyItems[i];
+    if (!toDelete.has(item.name)) {
+      toDelete.add(item.name);
+      currentSize -= item.size;
+    }
+  }
+
+  if (toDelete.size > 0) {
+    console.log(`Deleting ${toDelete.size} old entries`);
+    // 正确方式：并行删除单个 key
+    await Promise.all(
+      Array.from(toDelete).map(key => env.IP_STORAGE.delete(key))
+    );
+  } else {
+    console.log("无需删除任何记录");
+  }
+}
   /* ====================== 来源管理 ====================== */
   const defaultUrls = [
     "https://ip.164746.xyz",
@@ -858,31 +893,55 @@ const WHITELIST_DOMAINS = [
     const legacyRaw = await env.IP_STORAGE.get("cloudflare_ips");
     return legacyRaw ? JSON.parse(legacyRaw) : { ips: [], count: 0, lastUpdated: null, sources: [] };
   }
+  // 优化：批量获取KV值，使用Promise.all减少IO等待时间
+  async function batchGetKV(env, keys) {
+    const promises = keys.map(key => env.IP_STORAGE.get(key.name));
+    const values = await Promise.all(promises);
+    return values.map((value, idx) => ({ key: keys[idx], value }));
+  }
+
   async function getAllUniqueIPCount(env) {
-    const blacklist = await getBlacklist(env);
+    const blacklistRaw = await getBlacklist(env);
+    const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
     const allIPs = new Set();
-    const LIST_LIMIT = 1000;
-    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
-    for (const key of list.keys) {
-      const raw = await env.IP_STORAGE.get(key.name);
-      if (!raw) continue;
-      try {
-        const data = JSON.parse(raw);
-        if (data.ips && Array.isArray(data.ips)) {
-          data.ips.forEach(item => {
-            if (item && item.address && !isBlacklisted(item.address, blacklist)) {
-              allIPs.add(item.address);
-            }
-          });
+    const LIST_LIMIT = 500; // 优化：减小limit，分页处理以避免单次list过多
+    let cursor = null;
+    const allKeys = [];
+    // 分页收集所有键
+    do {
+      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT, cursor });
+      list.keys.forEach(key => allKeys.push(key));
+      cursor = list.cursor;
+    } while (cursor);
+
+    // 批量获取值（分批以避免内存峰值）
+    const BATCH_SIZE = 10; // 每个批次处理10个键
+    for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
+      const batchKeys = allKeys.slice(i, i + BATCH_SIZE);
+      const batchResults = await batchGetKV(env, batchKeys);
+      batchResults.forEach(({ key, value }) => {
+        if (!value) return;
+        try {
+          const data = JSON.parse(value);
+          if (data.ips && Array.isArray(data.ips)) {
+            data.ips.forEach(item => {
+              if (item && item.address && !isBlacklisted(item.address, blacklistPreprocessed)) {
+                allIPs.add(item.address);
+              }
+            });
+          }
+        } catch (e) {
+          console.warn(`Skip bad history ${key.name}:`, e);
         }
-      } catch (e) {
-        console.warn(`Skip bad history ${key.name}:`, e);
-      }
+      });
+      // 小延迟避免CPU峰值
+      if (i + BATCH_SIZE < allKeys.length) await new Promise(r => setTimeout(r, 10));
     }
     return allIPs.size;
   }
   async function getIPsWithFallback(env, limit = null) {
-    const blacklist = await getBlacklist(env);
+    const blacklistRaw = await getBlacklist(env);
+    const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
     const historicalData = await getRecentHistoryData(env, 10);
     if (historicalData.length === 0) {
       return {
@@ -891,7 +950,7 @@ const WHITELIST_DOMAINS = [
         lastUpdated: new Date().toISOString(),
         sources: [],
         originalCount: 0,
-        blacklist
+        blacklist: blacklistRaw
       };
     }
 
@@ -902,8 +961,8 @@ const WHITELIST_DOMAINS = [
     // Step 1: 优先处理最新批次
     let latestIPs = (latest.ips || []).filter(item => item && item.address); // 优化：确保item存在
 
-    // 过滤黑名单（使用增强过滤）
-    latestIPs = latestIPs.filter(item => !isBlacklisted(item.address, blacklist));
+    // 优化黑名单过滤：使用预处理后的结构
+    latestIPs = latestIPs.filter(item => !isBlacklisted(item.address, blacklistPreprocessed));
 
     // 按延迟升序排序（无延迟的排后面）
     latestIPs.sort((a, b) => {
@@ -935,7 +994,7 @@ const WHITELIST_DOMAINS = [
         lastUpdated: latest.lastUpdated || new Date().toISOString(),
         sources: latest.sources || [],
         originalCount: filteredLatestCount,
-        blacklist
+        blacklist: blacklistRaw
       };
     }
 
@@ -948,8 +1007,8 @@ const WHITELIST_DOMAINS = [
       const batch = historicalData[i];
       if (!batch.ips || !Array.isArray(batch.ips)) continue;
 
-      // 过滤黑名单（使用增强过滤）
-      let filteredBatch = batch.ips.filter(item => item && item.address && !isBlacklisted(item.address, blacklist)); // 优化：确保item存在
+      // 优化黑名单过滤：使用预处理后的结构
+      let filteredBatch = batch.ips.filter(item => item && item.address && !isBlacklisted(item.address, blacklistPreprocessed)); // 优化：确保item存在
 
       // 每个历史批次也按延迟排序后取top N
       const sortedBatch = [...filteredBatch].sort((a, b) => {
@@ -975,7 +1034,7 @@ const WHITELIST_DOMAINS = [
       lastUpdated: latest.lastUpdated || new Date().toISOString(),
       sources: latest.sources || [],
       originalCount: filteredLatestCount,
-      blacklist
+      blacklist: blacklistRaw
     };
   }
   /* ====================== 页面与接口 ====================== */
