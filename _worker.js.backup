@@ -1,2080 +1,2073 @@
 export default {
-    async scheduled(event, env, ctx) {
-      console.log("Scheduled task: Starting full IP update + speed test");
-      ctx.waitUntil(handleUpdate(env));
-    },
-    async fetch(request, env, ctx) {
-      const url = new URL(request.url);
-      const path = url.pathname;
-      if (!env.IP_STORAGE) {
-        return new Response("Error: KV namespace 'IP_STORAGE' is not bound.", { status: 500 });
-      }
-      if (request.method === "OPTIONS") return handleCORS();
-      try {
-        switch (path) {
-          case "/": return await serveHTML(env, request);
-          case "/update": return request.method === "POST" ? await handleUpdate(env) : methodNotAllowed();
-          case "/ips": return await handleGetIPs(env, true);
-          case "/ip.txt": return await handleGetIPs(env, false);
-          case "/raw": return await handleRawIPs(env);
-          case "/itdog-data": return await handleItdogData(env);
-          case "/speedtest": return await handleSpeedTest(request, env);
-          case "/set-limit": return request.method === "POST" ? await handleSetIpLimit(request, env) : methodNotAllowed();
-          case "/set-sources": return request.method === "POST" ? await handleSetSources(request, env) : methodNotAllowed();
-          case "/set-blacklist": return request.method === "POST" ? await handleSetBlacklist(request, env) : methodNotAllowed();
-          default: return jsonResponse({ error: "Not found" }, 404);
-        }
-      } catch (e) {
-        console.error("Unhandled error:", e);
-        return jsonResponse({ error: e.message }, 500);
-      }
+  async scheduled(event, env, ctx) {
+    console.log("Scheduled task: Starting full IP update + speed test");
+    ctx.waitUntil(handleUpdate(env));
+  },
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (!env.IP_STORAGE) {
+      return new Response("Error: KV namespace 'IP_STORAGE' is not bound.", { status: 500 });
     }
-  };
-  /* ====================== 工具函数 ====================== */
-  function formatTimestampKey(date = new Date()) {
-    const y = (date.getFullYear() % 100).toString().padStart(2, '0');
-    const M = (date.getMonth() + 1).toString().padStart(2, '0');
-    const d = date.getDate().toString().padStart(2, '0');
-    const h = date.getHours().toString().padStart(2, '0');
-    const m = date.getMinutes().toString().padStart(2, '0');
-    return `cloudflare_ips_${y}.${M}.${d}.${h}.${m}`;
-  }
-  function parseTimestampKey(key) {
-    const match = key.match(/^cloudflare_ips_(\d{2})\.(\d{2})\.(\d{2})\.(\d{2})\.(\d{2})$/);
-    if (!match) return null;
-    const [_, y, M, d, h, m] = match;
-    const year = 2000 + parseInt(y, 10);
-    return new Date(year, parseInt(M, 10) - 1, parseInt(d, 10), parseInt(h, 10), parseInt(m, 10));
-  }
-  /* ====================== 地址验证与处理函数 ====================== */
-  // IPv6 验证 - 增强版
-  function isValidIPv6(ip) {
-    // 去除可能的方括号
-    const cleanIP = ip.replace(/^\[|\]$/g, '');
-    // 基本 IPv6 格式验证
-    const ipv6Pattern = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^(([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$/;
-    if (!ipv6Pattern.test(cleanIP)) return false;
-    // 检查是否有效的 IPv6 地址 (排除无效格式如 ::1234:5678:9abc:def0:1234:5678:9abc:def0)
-    const segments = cleanIP.split(':').filter(Boolean);
-    const hasDoubleColon = cleanIP.includes('::');
-    if (hasDoubleColon) {
-      // 压缩格式
-      const maxSegments = 8;
-      const actualSegments = segments.length;
-      return actualSegments <= maxSegments;
-    } else {
-      // 完整格式
-      return segments.length === 8;
+    if (request.method === "OPTIONS") return handleCORS();
+    try {
+      switch (path) {
+        case "/": return await serveHTML(env, request);
+        case "/update": return request.method === "POST" ? await handleUpdate(env) : methodNotAllowed();
+        case "/ips": return await handleGetIPs(env, true);
+        case "/ip.txt": return await handleGetIPs(env, false);
+        case "/raw": return await handleRawIPs(env);
+        case "/itdog-data": return await handleItdogData(env);
+        case "/speedtest": return await handleSpeedTest(request, env);
+        case "/set-limit": return request.method === "POST" ? await handleSetIpLimit(request, env) : methodNotAllowed();
+        case "/set-sources": return request.method === "POST" ? await handleSetSources(request, env) : methodNotAllowed();
+        case "/set-blacklist": return request.method === "POST" ? await handleSetBlacklist(request, env) : methodNotAllowed();
+        default: return jsonResponse({ error: "Not found" }, 404);
+      }
+    } catch (e) {
+      console.error("Unhandled error:", e);
+      return jsonResponse({ error: e.message }, 500);
     }
   }
-  // IPv4 验证
-  function isValidIPv4(ip) {
-    const octets = ip.split('.');
-    if (octets.length !== 4) return false;
-    return octets.every(oct => {
-      const num = parseInt(oct, 10);
-      return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
-    });
+};
+/* ====================== 工具函数 ====================== */
+function formatTimestampKey(date = new Date()) {
+  const y = (date.getFullYear() % 100).toString().padStart(2, '0');
+  const M = (date.getMonth() + 1).toString().padStart(2, '0');
+  const d = date.getDate().toString().padStart(2, '0');
+  const h = date.getHours().toString().padStart(2, '0');
+  const m = date.getMinutes().toString().padStart(2, '0');
+  return `cloudflare_ips_${y}.${M}.${d}.${h}.${m}`;
+}
+function parseTimestampKey(key) {
+  const match = key.match(/^cloudflare_ips_(\d{2})\.(\d{2})\.(\d{2})\.(\d{2})\.(\d{2})$/);
+  if (!match) return null;
+  const [_, y, M, d, h, m] = match;
+  const year = 2000 + parseInt(y, 10);
+  return new Date(year, parseInt(M, 10) - 1, parseInt(d, 10), parseInt(h, 10), parseInt(m, 10));
+}
+/* ====================== 地址验证与处理函数 ====================== */
+// IPv6 验证 - 增强版
+function isValidIPv6(ip) {
+  // 去除可能的方括号
+  const cleanIP = ip.replace(/^\[|\]$/g, '');
+  // 基本 IPv6 格式验证
+  const ipv6Pattern = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^(([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$/;
+  if (!ipv6Pattern.test(cleanIP)) return false;
+  // 检查是否有效的 IPv6 地址 (排除无效格式如 ::1234:5678:9abc:def0:1234:5678:9abc:def0)
+  const segments = cleanIP.split(':').filter(Boolean);
+  const hasDoubleColon = cleanIP.includes('::');
+  if (hasDoubleColon) {
+    // 压缩格式
+    const maxSegments = 8;
+    const actualSegments = segments.length;
+    return actualSegments <= maxSegments;
+  } else {
+    // 完整格式
+    return segments.length === 8;
   }
-  // 域名验证
-  function isValidDomain(domain) {
-    if (!domain || typeof domain !== 'string') return false;
-    // 基本域名格式检查
-    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(domain)) return false;
-    // 禁止纯数字域名
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) return false;
-    // 禁止以点开头或结尾
-    if (domain.startsWith('.') || domain.endsWith('.')) return false;
-    // 不能只包含数字和点
-    if (/^[0-9.]+$/.test(domain)) return false;
+}
+// IPv4 验证
+function isValidIPv4(ip) {
+  const octets = ip.split('.');
+  if (octets.length !== 4) return false;
+  return octets.every(oct => {
+    const num = parseInt(oct, 10);
+    return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
+  });
+}
+// 域名验证
+function isValidDomain(domain) {
+  if (!domain || typeof domain !== 'string') return false;
+  // 基本域名格式检查
+  if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(domain)) return false;
+  // 禁止纯数字域名
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) return false;
+  // 禁止以点开头或结尾
+  if (domain.startsWith('.') || domain.endsWith('.')) return false;
+  // 不能只包含数字和点
+  if (/^[0-9.]+$/.test(domain)) return false;
+  return true;
+}
+// 通用地址验证 (IPv4, IPv6, 域名)
+function isValidAddress(address) {
+  if (!address) return false;
+  // 移除可能的方括号 (IPv6 格式)
+  const cleanAddr = address.replace(/^\[|\]$/g, '');
+  // 检查 IPv4
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(cleanAddr)) {
+    return isValidIPv4(cleanAddr);
+  }
+  // 检查 IPv6
+  if (isValidIPv6(cleanAddr)) {
     return true;
   }
-  // 通用地址验证 (IPv4, IPv6, 域名)
-  function isValidAddress(address) {
-    if (!address) return false;
-    // 移除可能的方括号 (IPv6 格式)
-    const cleanAddr = address.replace(/^\[|\]$/g, '');
-    // 检查 IPv4
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(cleanAddr)) {
-      return isValidIPv4(cleanAddr);
-    }
-    // 检查 IPv6
-    if (isValidIPv6(cleanAddr)) {
-      return true;
-    }
-    // 检查域名
-    if (isValidDomain(cleanAddr)) {
-      return true;
-    }
-    return false;
+  // 检查域名
+  if (isValidDomain(cleanAddr)) {
+    return true;
   }
-  // 端口验证
-  function isValidPort(port) {
-    if (!port) return false;
-    const portNum = parseInt(port, 10);
-    return !isNaN(portNum) && portNum > 0 && portNum <= 65535;
+  return false;
+}
+// 端口验证
+function isValidPort(port) {
+  if (!port) return false;
+  const portNum = parseInt(port, 10);
+  return !isNaN(portNum) && portNum > 0 && portNum <= 65535;
+}
+// 增强验证，支持带端口的地址
+function isValidAddressWithPort(address) {
+  if (!address) return false;
+  // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
+  if (address.startsWith('[') && address.includes(']:')) {
+    const ipv6End = address.indexOf(']');
+    const ipv6 = address.substring(1, ipv6End);
+    const portStr = address.substring(ipv6End + 2);
+    return isValidIPv6(ipv6) && isValidPort(portStr);
   }
-  // 增强验证，支持带端口的地址
-  function isValidAddressWithPort(address) {
-    if (!address) return false;
-    // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
-    if (address.startsWith('[') && address.includes(']:')) {
-      const ipv6End = address.indexOf(']');
-      const ipv6 = address.substring(1, ipv6End);
-      const portStr = address.substring(ipv6End + 2);
-      return isValidIPv6(ipv6) && isValidPort(portStr);
-    }
-    // 处理常规地址
-    const parts = address.split(':');
-    // IPv6 地址没有端口 (没有方括号)
-    if (parts.length > 2 && !address.includes('[')) {
-      return isValidIPv6(address);
-    }
-    // 单纯域名或IPv4/IPv6无端口
-    if (parts.length === 1) {
-      return isValidAddress(address);
-    }
-    // 域名:port 或 IPv4:port
-    if (parts.length === 2) {
-      const addrPart = parts[0];
-      const portPart = parts[1];
-      return isValidAddress(addrPart) && isValidPort(portPart);
-    }
-    // 其他情况
-    return false;
+  // 处理常规地址
+  const parts = address.split(':');
+  // IPv6 地址没有端口 (没有方括号)
+  if (parts.length > 2 && !address.includes('[')) {
+    return isValidIPv6(address);
   }
-  // 解析地址和端口
-  function parseAddressWithPort(address) {
-    let addrPart, portPart = "443";
-    // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
-    if (address.startsWith('[') && address.includes(']:')) {
-      const ipv6End = address.indexOf(']');
-      addrPart = address.substring(1, ipv6End);
-      portPart = address.substring(ipv6End + 2) || "443";
-      if (!isValidIPv6(addrPart)) return { address: address, port: "443", type: 'unknown' };
-      return { address: addrPart, port: portPart, type: 'ipv6' };
-    }
-    // 处理常规地址
-    const parts = address.split(':');
-    // IPv6 地址没有端口 (没有方括号)
-    if (parts.length > 2 && !address.includes('[')) {
-      if (!isValidIPv6(address)) return { address: address, port: "443", type: 'unknown' };
-      return { address: address, port: "443", type: 'ipv6' };
-    }
-    // IPv4 或域名
-    if (parts.length === 1) {
-      addrPart = parts[0];
-      const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
-      if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
-      return { 
-        address: addrPart.replace(/[\[\]]/g, ''), 
-        port: "443", 
-        type: type
-      };
-    }
-    // 域名:port 或 IPv4:port
-    if (parts.length === 2) {
-      addrPart = parts[0];
-      portPart = parts[1];
-      if (!isValidPort(portPart)) return { address: address, port: "443", type: 'unknown' };
-      const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
-      if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
-      return { 
-        address: addrPart.replace(/[\[\]]/g, ''), 
-        port: portPart, 
-        type: type
-      };
-    }
-    return { address: address, port: "443", type: 'unknown' };
+  // 单纯域名或IPv4/IPv6无端口
+  if (parts.length === 1) {
+    return isValidAddress(address);
   }
-  // 格式化地址输出
-  function formatAddressOutput(address, location, latency) {
-    const parsed = parseAddressWithPort(address);
-    const portPart = parsed.port !== "443" ? `:${parsed.port}` : "";
-    const latencyPart = latency ? `_${Math.round(latency)}ms` : "";
-    if (parsed.type === 'ipv6') {
-      return `[${parsed.address}]${portPart}#${location}${latencyPart}`;
-    } else if (parsed.type === 'domain') {
-      return `${parsed.address}${portPart}#${parsed.address}${latencyPart}`;
-    } else {
-      // IPv4
-      return `${parsed.address}${portPart}#${location}${latencyPart}`;
-    }
+  // 域名:port 或 IPv4:port
+  if (parts.length === 2) {
+    const addrPart = parts[0];
+    const portPart = parts[1];
+    return isValidAddress(addrPart) && isValidPort(portPart);
   }
-  // 解析已格式化的地址
-  function parseFormattedAddress(formatted) {
-    const parts = formatted.split('#');
-    const addressPart = parts[0];
-    const locationPart = parts[1] || "";
-    const [location, latency] = locationPart.split('_');
-    // 处理 IPv6 带方括号的格式
-    if (addressPart.startsWith('[') && addressPart.includes(']:')) {
-      const ipv6End = addressPart.indexOf(']');
-      const ipv6 = addressPart.substring(1, ipv6End);
-      const port = addressPart.substring(ipv6End + 2) || "443";
-      return { 
-        address: `[${ipv6}]${port !== "443" ? ":" + port : ""}`, 
-        location, 
-        latency: latency ? parseInt(latency, 10) : null,
-        type: 'ipv6'
-      };
-    }
-    // 处理 IPv4 或域名
-    const [baseAddr, port] = addressPart.split(':');
-    const portValue = port || "443";
-    let type = 'unknown';
-    if (isValidIPv4(baseAddr)) {
-      type = 'ipv4';
-    } else if (isValidIPv6(baseAddr)) {
-      type = 'ipv6';
-    } else {
-      type = 'domain';
-    }
-    return {
-      address: `${baseAddr}${portValue !== "443" ? ":" + portValue : ""}`,
-      location,
+  // 其他情况
+  return false;
+}
+// 解析地址和端口
+function parseAddressWithPort(address) {
+  let addrPart, portPart = "443";
+  // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
+  if (address.startsWith('[') && address.includes(']:')) {
+    const ipv6End = address.indexOf(']');
+    addrPart = address.substring(1, ipv6End);
+    portPart = address.substring(ipv6End + 2) || "443";
+    if (!isValidIPv6(addrPart)) return { address: address, port: "443", type: 'unknown' };
+    return { address: addrPart, port: portPart, type: 'ipv6' };
+  }
+  // 处理常规地址
+  const parts = address.split(':');
+  // IPv6 地址没有端口 (没有方括号)
+  if (parts.length > 2 && !address.includes('[')) {
+    if (!isValidIPv6(address)) return { address: address, port: "443", type: 'unknown' };
+    return { address: address, port: "443", type: 'ipv6' };
+  }
+  // IPv4 或域名
+  if (parts.length === 1) {
+    addrPart = parts[0];
+    const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
+    if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
+    return { 
+      address: addrPart.replace(/[\[\]]/g, ''), 
+      port: "443", 
+      type: type
+    };
+  }
+  // 域名:port 或 IPv4:port
+  if (parts.length === 2) {
+    addrPart = parts[0];
+    portPart = parts[1];
+    if (!isValidPort(portPart)) return { address: address, port: "443", type: 'unknown' };
+    const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
+    if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
+    return { 
+      address: addrPart.replace(/[\[\]]/g, ''), 
+      port: portPart, 
+      type: type
+    };
+  }
+  return { address: address, port: "443", type: 'unknown' };
+}
+// 格式化地址输出
+function formatAddressOutput(address, location, latency) {
+  const parsed = parseAddressWithPort(address);
+  const portPart = parsed.port !== "443" ? `:${parsed.port}` : "";
+  const latencyPart = latency ? `_${Math.round(latency)}ms` : "";
+  if (parsed.type === 'ipv6') {
+    return `[${parsed.address}]${portPart}#${location}${latencyPart}`;
+  } else if (parsed.type === 'domain') {
+    return `${parsed.address}${portPart}#${parsed.address}${latencyPart}`;
+  } else {
+    // IPv4
+    return `${parsed.address}${portPart}#${location}${latencyPart}`;
+  }
+}
+// 解析已格式化的地址
+function parseFormattedAddress(formatted) {
+  const parts = formatted.split('#');
+  const addressPart = parts[0];
+  const locationPart = parts[1] || "";
+  const [location, latency] = locationPart.split('_');
+  // 处理 IPv6 带方括号的格式
+  if (addressPart.startsWith('[') && addressPart.includes(']:')) {
+    const ipv6End = addressPart.indexOf(']');
+    const ipv6 = addressPart.substring(1, ipv6End);
+    const port = addressPart.substring(ipv6End + 2) || "443";
+    return { 
+      address: `[${ipv6}]${port !== "443" ? ":" + port : ""}`, 
+      location, 
       latency: latency ? parseInt(latency, 10) : null,
-      type
+      type: 'ipv6'
     };
   }
-  /* ====================== 白名单域名（只保留这些结尾的域名） ====================== */
+  // 处理 IPv4 或域名
+  const [baseAddr, port] = addressPart.split(':');
+  const portValue = port || "443";
+  let type = 'unknown';
+  if (isValidIPv4(baseAddr)) {
+    type = 'ipv4';
+  } else if (isValidIPv6(baseAddr)) {
+    type = 'ipv6';
+  } else {
+    type = 'domain';
+  }
+  return {
+    address: `${baseAddr}${portValue !== "443" ? ":" + portValue : ""}`,
+    location,
+    latency: latency ? parseInt(latency, 10) : null,
+    type
+  };
+}
+/* ====================== 白名单域名（只保留这些结尾的域名） ====================== */
 const WHITELIST_DOMAINS = [
-  "xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org",
-  "icu", "mn", "in", "sb", "is", "org", "ir", "app",
-  "ws", "net", "pw", "one", "top", "lt", "cylex.hu",
-  "cn", "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
-  "it", "es", "ru", "se", "no", "fi", "dk", "pl", "cz", "gr",
-  "be", "nl", "ie", "nz", "mx", "ar", "cl", "tr", "sa", "ae",
-  "id", "my", "th", "vn", "ph", "bd", "pk", "lk", "np", "il",
-  "za", "ng", "ke", "tz", "gh", "eg", "ma", "dz", "tn", "qa",
-  "kw", "bh", "om", "by", "ua", "sk", "hu", "ro", "bg", "rs",
-  "info", "biz", "mobi", "name", "pro", "aero", "coop", "museum",
-  "int", "gov", "edu", "mil", "tv", "me", "io", "ai", "gg",
-  "fm", "am", "sh", "cc", "la", "bz", "vc", "sc", "ag", "gd",
-  "lc", "dm", "ht", "do", "cr", "hn", "ni", "pa", "py", "uy",
-  "bo", "ec", "pe", "ve", "co", "sr", "gy", "jm", "tt", "bb",
-  "bs", "bm", "mq", "gp", "re", "yt", "tf", "wf", "pf", "nc",
-  "pn", "tk", "to", "vu", "ki", "nr", "mh", "pg", "fj", "ck",
-  "nu", "ax", "gl", "fo", "je", "im", "gi", "mt", "cy", "lu",
-  "li", "mc", "sm", "va", "ad", "al", "ba", "mk", "md", "ge",
-  "az", "af", "ao", "bj", "bw", "cv", "et", "gm", "gn", "lr",
-  "mz", "na", "rw", "sd", "sl", "sn", "so", "ss", "ug", "zm",
-  "zw", "bt", "kh", "mm", "kp", "iq", "sy", "jo", "lb", "ps",
-  "ye", "kg", "uz", "tj", "tm", "kz", "ee", "lv"
+"xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org",
+"icu", "mn", "in", "sb", "is", "org", "ir", "app",
+"ws", "net", "pw", "one", "top", "lt", "cylex.hu",
+"cn", "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
+"it", "es", "ru", "se", "no", "fi", "dk", "pl", "cz", "gr",
+"be", "nl", "ie", "nz", "mx", "ar", "cl", "tr", "sa", "ae",
+"id", "my", "th", "vn", "ph", "bd", "pk", "lk", "np", "il",
+"za", "ng", "ke", "tz", "gh", "eg", "ma", "dz", "tn", "qa",
+"kw", "bh", "om", "by", "ua", "sk", "hu", "ro", "bg", "rs",
+"info", "biz", "mobi", "name", "pro", "aero", "coop", "museum",
+"int", "gov", "edu", "mil", "tv", "me", "io", "ai", "gg",
+"fm", "am", "sh", "cc", "la", "bz", "vc", "sc", "ag", "gd",
+"lc", "dm", "ht", "do", "cr", "hn", "ni", "pa", "py", "uy",
+"bo", "ec", "pe", "ve", "co", "sr", "gy", "jm", "tt", "bb",
+"bs", "bm", "mq", "gp", "re", "yt", "tf", "wf", "pf", "nc",
+"pn", "tk", "to", "vu", "ki", "nr", "mh", "pg", "fj", "ck",
+"nu", "ax", "gl", "fo", "je", "im", "gi", "mt", "cy", "lu",
+"li", "mc", "sm", "va", "ad", "al", "ba", "mk", "md", "ge",
+"az", "af", "ao", "bj", "bw", "cv", "et", "gm", "gn", "lr",
+"mz", "na", "rw", "sd", "sl", "sn", "so", "ss", "ug", "zm",
+"zw", "bt", "kh", "mm", "kp", "iq", "sy", "jo", "lb", "ps",
+"ye", "kg", "uz", "tj", "tm", "kz", "ee", "lv"
 ];
-  // 优化：使用 Set 加速域名后缀检查（O(1) 平均）
-  const WHITELIST_SET = new Set(WHITELIST_DOMAINS.map(d => "." + d));
-  function isWhitelistedDomain(domain) {
-    if (!domain) return false;
-    // 检查是否以白名单中的域名结尾
-    for (const wl of WHITELIST_SET) {
-      if (domain.endsWith(wl) || domain === wl.slice(1)) return true;
-    }
-    return false;
+// 优化：使用 Set 加速域名后缀检查（O(1) 平均）
+const WHITELIST_SET = new Set(WHITELIST_DOMAINS.map(d => "." + d));
+function isWhitelistedDomain(domain) {
+  if (!domain) return false;
+  // 检查是否以白名单中的域名结尾
+  for (const wl of WHITELIST_SET) {
+    if (domain.endsWith(wl) || domain === wl.slice(1)) return true;
   }
-  /* ====================== 关键词（中英文） ====================== */
-  const KEYWORDS = [
-    "地址", "公共地址", "域名", "IP", "Host", "host", "域名地址",
-    "Address", "Public Address", "Domain", "IP Address", "Hostname",
-    "IPv6", "ipv6", "IPV6", "IPv4", "ipv4", "IPV4"
-  ];
-  /* ====================== 增强提取函数：支持 IPv6、白名单过滤 ====================== */
-  function extractAddressesFromHTML(html) {
-    const set = new Set();
-    // 预编译正则
-    const patterns = {
-      ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?/g,
-      plainIpv6: /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?/g,
-      keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
-      attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
-      backup: /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g,
-      combined: /(?:(?:\[[\w:]+(?::\d{1,5})?\])|(?:[\w.-]+(?::\d{1,5})?)|(?:[0-9a-fA-F:]+(?::\d{1,5})?)|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?))/gi
-    };
-    // 单一pass合并提取所有候选
-    let combinedMatch;
-    while ((combinedMatch = patterns.combined.exec(html)) !== null) {
-      const candidate = combinedMatch[0];
-      if (isValidAddressWithPort(candidate)) {
-        const parsed = parseAddressWithPort(candidate);
-        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-        set.add(candidate);
-      }
+  return false;
+}
+/* ====================== 关键词（中英文） ====================== */
+const KEYWORDS = [
+  "地址", "公共地址", "域名", "IP", "Host", "host", "域名地址",
+  "Address", "Public Address", "Domain", "IP Address", "Hostname",
+  "IPv6", "ipv6", "IPV6", "IPv4", "ipv4", "IPV4"
+];
+/* ====================== 增强提取函数：支持 IPv6、白名单过滤 ====================== */
+function extractAddressesFromHTML(html) {
+  const set = new Set();
+  // 预编译正则
+  const patterns = {
+    ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?/g,
+    plainIpv6: /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?/g,
+    keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
+    attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
+    backup: /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g,
+    combined: /(?:(?:\[[\w:]+(?::\d{1,5})?\])|(?:[\w.-]+(?::\d{1,5})?)|(?:[0-9a-fA-F:]+(?::\d{1,5})?)|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?))/gi
+  };
+  // 单一pass合并提取所有候选
+  let combinedMatch;
+  while ((combinedMatch = patterns.combined.exec(html)) !== null) {
+    const candidate = combinedMatch[0];
+    if (isValidAddressWithPort(candidate)) {
+      const parsed = parseAddressWithPort(candidate);
+      if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
+      set.add(candidate);
     }
-    // 针对性后处理：IPv6 with brackets 和 plain IPv6
-    let ipv6Match;
-    while ((ipv6Match = patterns.ipv6WithBrackets.exec(html)) !== null) {
-      const fullMatch = ipv6Match[0];
-      if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
-    }
-    let plainIpv6Match;
-    while ((plainIpv6Match = patterns.plainIpv6.exec(html)) !== null) {
-      const fullMatch = plainIpv6Match[0];
-      // 优化：用 isValidIPv6 验证所有捕获，移除特定 continue
-      const cleanIp = fullMatch.replace(/:\d+$/, '');
-      if (!isValidIPv6(cleanIp)) continue;
-      const contextStart = Math.max(0, plainIpv6Match.index - 10);
-      const context = html.substring(contextStart, plainIpv6Match.index + fullMatch.length + 10);
-      if (context.includes('http://') || context.includes('https://')) {
-        if (!fullMatch.startsWith('[')) {
-          const withBrackets = `[${fullMatch.split(':')[0]}]:${fullMatch.split(':').slice(1).join(':')}`;
-          if (isValidAddressWithPort(withBrackets)) set.add(withBrackets);
-        }
-      }
-      if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
-    }
-    // 关键词和属性提取（简化，仅当combined未捕获时补充）
-    let match;
-    while ((match = patterns.keyword.exec(html)) !== null) {
-      const candidate = match[1].trim();
-      const rest = html.slice(match.index + match[0].length);
-      const fullMatch = candidate + rest.split(/[\s<"'`]/)[0];
-      let toCheck = fullMatch;
-      if (isValidIPv6(candidate.replace(/[\[\]]/g, '')) && !candidate.includes('[')) {
-        toCheck = `[${candidate}]`;
-      }
-      if (isValidAddressWithPort(toCheck)) {
-        const parsed = parseAddressWithPort(toCheck);
-        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-        set.add(toCheck);
-      } else if (isValidAddressWithPort(candidate)) {
-        const parsed = parseAddressWithPort(candidate);
-        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-        set.add(candidate);
-      }
-    }
-    while ((match = patterns.attr.exec(html)) !== null) {
-      const candidate = match[1].trim();
-      if (isValidAddressWithPort(candidate)) {
-        const parsed = parseAddressWithPort(candidate);
-        if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-        set.add(candidate);
-      }
-    }
-    return Array.from(set);
   }
-  /* ====================== 优化黑名单过滤函数 ====================== */
-  // 预处理黑名单：精确匹配用Set（O(1)查找），域名模式用Set（endsWith检查）
-  function preprocessBlacklist(blacklist) {
-    if (!blacklist || blacklist.length === 0) return { exactSet: new Set(), domainSet: new Set() };
-    const exactSet = new Set();
-    const domainSet = new Set();
-    blacklist.forEach(item => {
-      if (item.startsWith('"') && item.endsWith('"')) {
-        const domain = item.slice(1, -1).trim();
-        if (domain) domainSet.add(domain);
-      } else {
-        exactSet.add(item);
+  // 针对性后处理：IPv6 with brackets 和 plain IPv6
+  let ipv6Match;
+  while ((ipv6Match = patterns.ipv6WithBrackets.exec(html)) !== null) {
+    const fullMatch = ipv6Match[0];
+    if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
+  }
+  let plainIpv6Match;
+  while ((plainIpv6Match = patterns.plainIpv6.exec(html)) !== null) {
+    const fullMatch = plainIpv6Match[0];
+    // 优化：用 isValidIPv6 验证所有捕获，移除特定 continue
+    const cleanIp = fullMatch.replace(/:\d+$/, '');
+    if (!isValidIPv6(cleanIp)) continue;
+    const contextStart = Math.max(0, plainIpv6Match.index - 10);
+    const context = html.substring(contextStart, plainIpv6Match.index + fullMatch.length + 10);
+    if (context.includes('http://') || context.includes('https://')) {
+      if (!fullMatch.startsWith('[')) {
+        const withBrackets = `[${fullMatch.split(':')[0]}]:${fullMatch.split(':').slice(1).join(':')}`;
+        if (isValidAddressWithPort(withBrackets)) set.add(withBrackets);
       }
-    });
-    return { exactSet, domainSet };
+    }
+    if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
+  }
+  // 关键词和属性提取（简化，仅当combined未捕获时补充）
+  let match;
+  while ((match = patterns.keyword.exec(html)) !== null) {
+    const candidate = match[1].trim();
+    const rest = html.slice(match.index + match[0].length);
+    const fullMatch = candidate + rest.split(/[\s<"'`]/)[0];
+    let toCheck = fullMatch;
+    if (isValidIPv6(candidate.replace(/[\[\]]/g, '')) && !candidate.includes('[')) {
+      toCheck = `[${candidate}]`;
+    }
+    if (isValidAddressWithPort(toCheck)) {
+      const parsed = parseAddressWithPort(toCheck);
+      if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
+      set.add(toCheck);
+    } else if (isValidAddressWithPort(candidate)) {
+      const parsed = parseAddressWithPort(candidate);
+      if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
+      set.add(candidate);
+    }
+  }
+  while ((match = patterns.attr.exec(html)) !== null) {
+    const candidate = match[1].trim();
+    if (isValidAddressWithPort(candidate)) {
+      const parsed = parseAddressWithPort(candidate);
+      if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
+      set.add(candidate);
+    }
+  }
+  return Array.from(set);
+}
+/* ====================== 优化黑名单过滤函数 ====================== */
+// 预处理黑名单：精确匹配用Set（O(1)查找），域名模式用Set（endsWith检查）
+function preprocessBlacklist(blacklist) {
+  if (!blacklist || blacklist.length === 0) return { exactSet: new Set(), domainSet: new Set() };
+  const exactSet = new Set();
+  const domainSet = new Set();
+  blacklist.forEach(item => {
+    if (item.startsWith('"') && item.endsWith('"')) {
+      const domain = item.slice(1, -1).trim();
+      if (domain) domainSet.add(domain);
+    } else {
+      exactSet.add(item);
+    }
+  });
+  return { exactSet, domainSet };
+}
+
+// 优化后的黑名单检查：O(1)精确匹配 + O(n)域名检查（n=黑名单大小，通常小）
+function isBlacklisted(address, blacklistPreprocessed) {
+  const { exactSet, domainSet } = blacklistPreprocessed;
+  if (exactSet.has(address)) return true;
+
+  const parsedAddress = parseAddressWithPort(address);
+  const addressBase = parsedAddress.address; // 基础地址（不带端口）
+
+  // 只对域名类型检查子域名模式
+  if (parsedAddress.type === 'domain' && domainSet.size > 0) {
+    for (const domain of domainSet) {
+      if (addressBase === domain || addressBase.endsWith('.' + domain)) {
+        return true;
+      }
+    }
   }
 
-  // 优化后的黑名单检查：O(1)精确匹配 + O(n)域名检查（n=黑名单大小，通常小）
-  function isBlacklisted(address, blacklistPreprocessed) {
-    const { exactSet, domainSet } = blacklistPreprocessed;
-    if (exactSet.has(address)) return true;
-
-    const parsedAddress = parseAddressWithPort(address);
-    const addressBase = parsedAddress.address; // 基础地址（不带端口）
-
-    // 只对域名类型检查子域名模式
-    if (parsedAddress.type === 'domain' && domainSet.size > 0) {
-      for (const domain of domainSet) {
-        if (addressBase === domain || addressBase.endsWith('.' + domain)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-  /* ====================== 核心：更新 + 自动测速 ====================== */
-  async function handleUpdate(env) {
-    const startTime = Date.now();
-    const { uniqueAddresses, results, addressesWithLocation } = await updateAllAddresses(env);
-    // 从最近3个历史记录中获取已有的位置和延迟信息
-    const historicalData = await getRecentHistoryData(env, 3);
-    // 创建地址到历史数据的映射
-    const historyMap = new Map();
-    historicalData.forEach(data => {
-      if (data.ips) {
-        data.ips.forEach(item => {
-          if (!historyMap.has(item.address)) {
-            historyMap.set(item.address, {
-              location: item.location,
-              latency: item.latency
-            });
-          }
-        });
-      }
-    });
-    // 筛选出需要测试地理位置的地址
-    const needLocationTest = [];
-    const knownLocations = new Map();
-    addressesWithLocation.forEach(item => {
-      const historyInfo = historyMap.get(item.address);
-      if (historyInfo && historyInfo.location && historyInfo.location !== "未知") {
-        knownLocations.set(item.address, historyInfo.location);
-      } else {
-        needLocationTest.push(item.address);
-      }
-    });
-    // 筛选出需要测试延迟的地址
-    const needLatencyTest = [];
-    const knownLatencies = new Map();
-    uniqueAddresses.forEach(addr => {
-      const historyInfo = historyMap.get(addr);
-      if (historyInfo && historyInfo.latency) {
-        knownLatencies.set(addr, historyInfo.latency);
-      } else {
-        needLatencyTest.push(addr);
-      }
-    });
-    console.log(`Total Addresses: ${uniqueAddresses.length}`);
-    console.log(`Need location test: ${needLocationTest.length}`);
-    console.log(`Need latency test: ${needLatencyTest.length}`);
-    // 获取新的地理位置
-    let newLocations = [];
-    if (needLocationTest.length > 0) {
-      newLocations = await getLocationsForAddresses(needLocationTest);
-    }
-    // 获取新的延迟信息
-    let newLatencies = [];
-    if (needLatencyTest.length > 0) {
-      newLatencies = await batchTestLatency(needLatencyTest);
-    }
-    // 合并所有信息
-    const finalAddresses = addressesWithLocation.map(item => {
-      const address = item.address;
-      let location = item.location || "未知";
-      let latency = null;
-      // 如果在历史数据中找到位置信息
-      if (knownLocations.has(address)) {
-        location = knownLocations.get(address);
-      } 
-      // 否则使用新获取的位置信息
-      else {
-        const index = needLocationTest.indexOf(address);
-        if (index !== -1 && newLocations[index]) {
-          location = newLocations[index];
-        }
-      }
-      // 如果在历史数据中找到延迟信息
-      if (knownLatencies.has(address)) {
-        latency = knownLatencies.get(address);
-      } 
-      // 否则使用新获取的延迟信息
-      else {
-        const index = needLatencyTest.indexOf(address);
-        if (index !== -1 && newLatencies[index]?.success) {
-          latency = newLatencies[index].latency;
-        }
-      }
-      return {
-        address: address,
-        location: location,
-        latency: latency
-      };
-    });
-    const now = new Date();
-    const finalData = {
-      ips: finalAddresses,
-      lastUpdated: now.toISOString(),
-      count: uniqueAddresses.length,
-      sources: results
-    };
-    const timestampKey = formatTimestampKey(now);
-    await env.IP_STORAGE.put(timestampKey, JSON.stringify(finalData));
-    console.log(`Saved timestamped ${timestampKey}`);
-    // 清理旧的历史记录
-    await cleanupOldIPs(env);
-    // 也保存到主键，以保证兼容性
-    await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(finalData));
-    const duration = Date.now() - startTime;
-    return jsonResponse({
-      success: true,
-      message: "更新并测速完成",
-      duration: `${duration}ms`,
-      totalIPs: uniqueAddresses.length,
-      newLocationTested: needLocationTest.length,
-      newLatencyTested: needLatencyTest.length,
-      timestamp: now.toISOString(),
-      historyKey: timestampKey
-    });
-  }
-  /* ====================== 从最近历史记录获取数据 ====================== */
-  async function getRecentHistoryData(env, limit = 3) {
-    const historyData = [];
-    const LIST_LIMIT = 1000; // 增大limit以单次获取更多
-    const now = new Date();
-    // 单次list所有键
-    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
-    const keys = [];
-    for (const key of list.keys) {
-      const date = parseTimestampKey(key.name);
-      if (date && date <= now) {
-        keys.push({ name: key.name, date: date });
-      }
-    }
-    // 按时间降序排序
-    keys.sort((a, b) => b.date - a.date);
-    // 获取最新的 limit 个有效记录
-    for (const key of keys) {
-      if (historyData.length >= limit) break;
-      const raw = await env.IP_STORAGE.get(key.name);
-      if (!raw) continue;
-      try {
-        const data = JSON.parse(raw);
-        if (data.ips && Array.isArray(data.ips)) {
-          historyData.push(data);
-        }
-      } catch (e) {
-        console.warn(`Failed to parse historical data ${key.name}:`, e);
-      }
-    }
-    return historyData;
-  }
-  /* ====================== 地址收集 —— 支持 IPv4、IPv6 和域名 ====================== */
-  async function updateAllAddresses(env) {
-    const urls = await getSources(env);
-    const uniqueAddresses = new Set();
-    const results = [];
-    for (let i = 0; i < urls.length; i += 3) {
-      const batch = urls.slice(i, i + 3);
-      const settled = await Promise.allSettled(batch.map(u => fetchURLWithTimeout(u)));
-      settled.forEach((res, idx) => {
-        const url = batch[idx];
-        // 使用完整URL作为标识，避免同一域名不同路径被视为相同来源
-        const name = url;
-        if (res.status === "fulfilled") {
-          const addresses = extractAddressesFromHTML(res.value);
-          console.log(`URL ${url} extracted ${addresses.length} addresses:`, addresses);
-          addresses.forEach(addr => uniqueAddresses.add(addr));
-          results.push({ name, status: "success", count: addresses.length });
-        } else {
-          console.error(`Failed to fetch ${url}:`, res.reason);
-          results.push({ name, status: "error", count: 0, error: res.reason.message || "Unknown" });
+  return false;
+}
+/* ====================== 核心：更新 + 自动测速 ====================== */
+async function handleUpdate(env) {
+  const startTime = Date.now();
+  const { uniqueAddresses, results, addressesWithLocation } = await updateAllAddresses(env);
+  // 从最近3个历史记录中获取已有的位置和延迟信息
+  const historicalData = await getRecentHistoryData(env, 3);
+  // 创建地址到历史数据的映射
+  const historyMap = new Map();
+  historicalData.forEach(data => {
+    if (data.ips) {
+      data.ips.forEach(item => {
+        if (!historyMap.has(item.address)) {
+          historyMap.set(item.address, {
+            location: item.location,
+            latency: item.latency
+          });
         }
       });
-      if (i + 3 < urls.length) await new Promise(r => setTimeout(r, 300)); // 动态延迟优化
     }
-    const sortedAddresses = Array.from(uniqueAddresses).sort((a, b) => {
-      const parsedA = parseAddressWithPort(a);
-      const parsedB = parseAddressWithPort(b);
-      // 排序优先级: IPv4 -> IPv6 -> 域名
-      if (parsedA.type === 'ipv4' && parsedB.type !== 'ipv4') return -1;
-      if (parsedA.type !== 'ipv4' && parsedB.type === 'ipv4') return 1;
-      if (parsedA.type === 'ipv4' && parsedB.type === 'ipv4') {
-        const pa = parsedA.address.split(".").map(Number);
-        const pb = parsedB.address.split(".").map(Number);
-        for (let i = 0; i < 4; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
-        return parseInt(parsedA.port) - parseInt(parsedB.port);
+  });
+  // 筛选出需要测试地理位置的地址
+  const needLocationTest = [];
+  const knownLocations = new Map();
+  addressesWithLocation.forEach(item => {
+    const historyInfo = historyMap.get(item.address);
+    if (historyInfo && historyInfo.location && historyInfo.location !== "未知") {
+      knownLocations.set(item.address, historyInfo.location);
+    } else {
+      needLocationTest.push(item.address);
+    }
+  });
+  // 筛选出需要测试延迟的地址
+  const needLatencyTest = [];
+  const knownLatencies = new Map();
+  uniqueAddresses.forEach(addr => {
+    const historyInfo = historyMap.get(addr);
+    if (historyInfo && historyInfo.latency) {
+      knownLatencies.set(addr, historyInfo.latency);
+    } else {
+      needLatencyTest.push(addr);
+    }
+  });
+  console.log(`Total Addresses: ${uniqueAddresses.length}`);
+  console.log(`Need location test: ${needLocationTest.length}`);
+  console.log(`Need latency test: ${needLatencyTest.length}`);
+  // 获取新的地理位置
+  let newLocations = [];
+  if (needLocationTest.length > 0) {
+    newLocations = await getLocationsForAddresses(needLocationTest);
+  }
+  // 获取新的延迟信息
+  let newLatencies = [];
+  if (needLatencyTest.length > 0) {
+    newLatencies = await batchTestLatency(needLatencyTest);
+  }
+  // 合并所有信息
+  const finalAddresses = addressesWithLocation.map(item => {
+    const address = item.address;
+    let location = item.location || "未知";
+    let latency = null;
+    // 如果在历史数据中找到位置信息
+    if (knownLocations.has(address)) {
+      location = knownLocations.get(address);
+    } 
+    // 否则使用新获取的位置信息
+    else {
+      const index = needLocationTest.indexOf(address);
+      if (index !== -1 && newLocations[index]) {
+        location = newLocations[index];
       }
-      if (parsedA.type === 'ipv6' && parsedB.type !== 'ipv6') return -1;
-      if (parsedA.type !== 'ipv6' && parsedB.type === 'ipv6') return 1;
-      if (parsedA.type === 'ipv6' && parsedB.type === 'ipv6') {
-        // 按字符串排序 IPv6
-        if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
-        return parseInt(parsedA.port) - parseInt(parsedB.port);
+    }
+    // 如果在历史数据中找到延迟信息
+    if (knownLatencies.has(address)) {
+      latency = knownLatencies.get(address);
+    } 
+    // 否则使用新获取的延迟信息
+    else {
+      const index = needLatencyTest.indexOf(address);
+      if (index !== -1 && newLatencies[index]?.success) {
+        latency = newLatencies[index].latency;
       }
-      if (parsedA.type === 'domain' && parsedB.type !== 'domain') return -1;
-      if (parsedA.type !== 'domain' && parsedB.type === 'domain') return 1;
-      if (parsedA.type === 'domain' && parsedB.type === 'domain') {
-        // 按域名排序
-        if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
-        return parseInt(parsedA.port) - parseInt(parsedB.port);
+    }
+    return {
+      address: address,
+      location: location,
+      latency: latency
+    };
+  });
+  const now = new Date();
+  const finalData = {
+    ips: finalAddresses,
+    lastUpdated: now.toISOString(),
+    count: uniqueAddresses.length,
+    sources: results
+  };
+  const timestampKey = formatTimestampKey(now);
+  await env.IP_STORAGE.put(timestampKey, JSON.stringify(finalData));
+  console.log(`Saved timestamped ${timestampKey}`);
+  // 清理旧的历史记录
+  await cleanupOldIPs(env);
+  // 也保存到主键，以保证兼容性
+  await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(finalData));
+  const duration = Date.now() - startTime;
+  return jsonResponse({
+    success: true,
+    message: "更新并测速完成",
+    duration: `${duration}ms`,
+    totalIPs: uniqueAddresses.length,
+    newLocationTested: needLocationTest.length,
+    newLatencyTested: needLatencyTest.length,
+    timestamp: now.toISOString(),
+    historyKey: timestampKey
+  });
+}
+/* ====================== 从最近历史记录获取数据 ====================== */
+async function getRecentHistoryData(env, limit = 3) {
+  const historyData = [];
+  const LIST_LIMIT = 1000; // 增大limit以单次获取更多
+  const now = new Date();
+  // 单次list所有键
+  const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
+  const keys = [];
+  for (const key of list.keys) {
+    const date = parseTimestampKey(key.name);
+    if (date && date <= now) {
+      keys.push({ name: key.name, date: date });
+    }
+  }
+  // 按时间降序排序
+  keys.sort((a, b) => b.date - a.date);
+  // 获取最新的 limit 个有效记录
+  for (const key of keys) {
+    if (historyData.length >= limit) break;
+    const raw = await env.IP_STORAGE.get(key.name);
+    if (!raw) continue;
+    try {
+      const data = JSON.parse(raw);
+      if (data.ips && Array.isArray(data.ips)) {
+        historyData.push(data);
       }
-      // 通用排序
-      return a.localeCompare(b);
+    } catch (e) {
+      console.warn(`Failed to parse historical data ${key.name}:`, e);
+    }
+  }
+  return historyData;
+}
+/* ====================== 地址收集 —— 支持 IPv4、IPv6 和域名 ====================== */
+async function updateAllAddresses(env) {
+  const urls = await getSources(env);
+  const uniqueAddresses = new Set();
+  const results = [];
+  for (let i = 0; i < urls.length; i += 3) {
+    const batch = urls.slice(i, i + 3);
+    const settled = await Promise.allSettled(batch.map(u => fetchURLWithTimeout(u)));
+    settled.forEach((res, idx) => {
+      const url = batch[idx];
+      // 使用完整URL作为标识，避免同一域名不同路径被视为相同来源
+      const name = url;
+      if (res.status === "fulfilled") {
+        const addresses = extractAddressesFromHTML(res.value);
+        console.log(`URL ${url} extracted ${addresses.length} addresses:`, addresses);
+        addresses.forEach(addr => uniqueAddresses.add(addr));
+        results.push({ name, status: "success", count: addresses.length });
+      } else {
+        console.error(`Failed to fetch ${url}:`, res.reason);
+        results.push({ name, status: "error", count: 0, error: res.reason.message || "Unknown" });
+      }
     });
-    // 初始化所有地址的位置为"未知"
-    const addressesWithLocation = sortedAddresses.map(addr => ({
-      address: addr,
-      location: "未知"
+    if (i + 3 < urls.length) await new Promise(r => setTimeout(r, 300)); // 动态延迟优化
+  }
+  const sortedAddresses = Array.from(uniqueAddresses).sort((a, b) => {
+    const parsedA = parseAddressWithPort(a);
+    const parsedB = parseAddressWithPort(b);
+    // 排序优先级: IPv4 -> IPv6 -> 域名
+    if (parsedA.type === 'ipv4' && parsedB.type !== 'ipv4') return -1;
+    if (parsedA.type !== 'ipv4' && parsedB.type === 'ipv4') return 1;
+    if (parsedA.type === 'ipv4' && parsedB.type === 'ipv4') {
+      const pa = parsedA.address.split(".").map(Number);
+      const pb = parsedB.address.split(".").map(Number);
+      for (let i = 0; i < 4; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+      return parseInt(parsedA.port) - parseInt(parsedB.port);
+    }
+    if (parsedA.type === 'ipv6' && parsedB.type !== 'ipv6') return -1;
+    if (parsedA.type !== 'ipv6' && parsedB.type === 'ipv6') return 1;
+    if (parsedA.type === 'ipv6' && parsedB.type === 'ipv6') {
+      // 按字符串排序 IPv6
+      if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
+      return parseInt(parsedA.port) - parseInt(parsedB.port);
+    }
+    if (parsedA.type === 'domain' && parsedB.type !== 'domain') return -1;
+    if (parsedA.type !== 'domain' && parsedB.type === 'domain') return 1;
+    if (parsedA.type === 'domain' && parsedB.type === 'domain') {
+      // 按域名排序
+      if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
+      return parseInt(parsedA.port) - parseInt(parsedB.port);
+    }
+    // 通用排序
+    return a.localeCompare(b);
+  });
+  // 初始化所有地址的位置为"未知"
+  const addressesWithLocation = sortedAddresses.map(addr => ({
+    address: addr,
+    location: "未知"
+  }));
+  return { uniqueAddresses: sortedAddresses, results, addressesWithLocation };
+}
+// 增强地理位置获取，处理 IPv4、IPv6 和域名
+async function getLocationsForAddresses(addresses) {
+  const batchSize = 39;
+  const locs = new Array(addresses.length).fill("未知");
+  // 处理所有地址
+  for (let i = 0; i < addresses.length; i++) {
+    const addr = addresses[i];
+    const parsed = parseAddressWithPort(addr);
+    // 域名使用自身的主机名作为位置
+    if (parsed.type === 'domain') {
+      locs[i] = parsed.address;
+    } 
+    // IPv4和IPv6的位置将在下面获取
+  }
+  // 只对IPv4地址使用IP-API
+  const ipv4Addresses = [];
+  const ipv4Indices = [];
+  // 只对IPv6地址使用ipinfo.io
+  const ipv6Addresses = [];
+  const ipv6Indices = [];
+  addresses.forEach((addr, index) => {
+    const parsed = parseAddressWithPort(addr);
+    if (parsed.type === 'ipv4') {
+      ipv4Addresses.push(parsed.address);
+      ipv4Indices.push(index);
+    } else if (parsed.type === 'ipv6') {
+      ipv6Addresses.push(parsed.address);
+      ipv6Indices.push(index);
+    }
+  });
+  // 处理IPv4地理位置
+  for (let i = 0; i < ipv4Addresses.length; i += batchSize) {
+    const batchIndices = ipv4Indices.slice(i, i + batchSize);
+    const batch = ipv4Addresses.slice(i, i + batchSize).map(ip => ({
+      query: ip,
+      fields: "countryCode"
     }));
-    return { uniqueAddresses: sortedAddresses, results, addressesWithLocation };
-  }
-  // 增强地理位置获取，处理 IPv4、IPv6 和域名
-  async function getLocationsForAddresses(addresses) {
-    const batchSize = 39;
-    const locs = new Array(addresses.length).fill("未知");
-    // 处理所有地址
-    for (let i = 0; i < addresses.length; i++) {
-      const addr = addresses[i];
-      const parsed = parseAddressWithPort(addr);
-      // 域名使用自身的主机名作为位置
-      if (parsed.type === 'domain') {
-        locs[i] = parsed.address;
-      } 
-      // IPv4和IPv6的位置将在下面获取
-    }
-    // 只对IPv4地址使用IP-API
-    const ipv4Addresses = [];
-    const ipv4Indices = [];
-    // 只对IPv6地址使用ipinfo.io
-    const ipv6Addresses = [];
-    const ipv6Indices = [];
-    addresses.forEach((addr, index) => {
-      const parsed = parseAddressWithPort(addr);
-      if (parsed.type === 'ipv4') {
-        ipv4Addresses.push(parsed.address);
-        ipv4Indices.push(index);
-      } else if (parsed.type === 'ipv6') {
-        ipv6Addresses.push(parsed.address);
-        ipv6Indices.push(index);
-      }
-    });
-    // 处理IPv4地理位置
-    for (let i = 0; i < ipv4Addresses.length; i += batchSize) {
-      const batchIndices = ipv4Indices.slice(i, i + batchSize);
-      const batch = ipv4Addresses.slice(i, i + batchSize).map(ip => ({
-        query: ip,
-        fields: "countryCode"
-      }));
-      try {
-        const r = await fetch("http://ip-api.com/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(batch)
-        });
-        if (r.ok) {
-          const data = await r.json();
-          data.forEach((o, j) => {
-            if (o.countryCode) {
-              locs[batchIndices[j]] = o.countryCode;
-            }
-          });
-        }
-      } catch (e) {
-        console.error("Location batch failed for IPv4:", e);
-      }
-      if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
-    }
-    // 处理IPv6地理位置，批量每5个
-    const ipv6BatchSize = 4;
-    for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
-      const batch = ipv6Addresses.slice(i, i + ipv6BatchSize);
-      const batchIndices = ipv6Indices.slice(i, i + ipv6BatchSize);
-      try {
-        const r = await fetch("https://ipinfo.io/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(batch)
-        });
-        if (r.ok) {
-          const data = await r.json();
-          data.forEach((d, j) => {
-            if (d.country) {
-              locs[batchIndices[j]] = d.country;
-            }
-          });
-        }
-      } catch (e) {
-        console.error(`Location batch failed for IPv6 batch ${i}:`, e);
-        // Fallback to single requests for this batch
-        for (let k = 0; k < batch.length; k++) {
-          const index = batchIndices[k];
-          const ip = batch[k];
-          try {
-            const sr = await fetch(`https://ipinfo.io/${ip}/json`);
-            if (sr.ok) {
-              const sdata = await sr.json();
-              if (sdata.country) locs[index] = sdata.country;
-            }
-          } catch (se) {
-            console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
+    try {
+      const r = await fetch("http://ip-api.com/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(batch)
+      });
+      if (r.ok) {
+        const data = await r.json();
+        data.forEach((o, j) => {
+          if (o.countryCode) {
+            locs[batchIndices[j]] = o.countryCode;
           }
-          if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 3000));
-        }
+        });
       }
-      if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 2000));
+    } catch (e) {
+      console.error("Location batch failed for IPv4:", e);
     }
-    return locs;
+    if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
   }
-  async function fetchURLWithTimeout(url, timeout = 10000) {
+  // 处理IPv6地理位置，批量每5个
+  const ipv6BatchSize = 4;
+  for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
+    const batch = ipv6Addresses.slice(i, i + ipv6BatchSize);
+    const batchIndices = ipv6Indices.slice(i, i + ipv6BatchSize);
+    try {
+      const r = await fetch("https://ipinfo.io/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(batch)
+      });
+      if (r.ok) {
+        const data = await r.json();
+        data.forEach((d, j) => {
+          if (d.country) {
+            locs[batchIndices[j]] = d.country;
+          }
+        });
+      }
+    } catch (e) {
+      console.error(`Location batch failed for IPv6 batch ${i}:`, e);
+      // Fallback to single requests for this batch
+      for (let k = 0; k < batch.length; k++) {
+        const index = batchIndices[k];
+        const ip = batch[k];
+        try {
+          const sr = await fetch(`https://ipinfo.io/${ip}/json`);
+          if (sr.ok) {
+            const sdata = await sr.json();
+            if (sdata.country) locs[index] = sdata.country;
+          }
+        } catch (se) {
+          console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
+        }
+        if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 2000));
+  }
+  return locs;
+}
+async function fetchURLWithTimeout(url, timeout = 10000) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), timeout);
+  const resp = await fetch(url, {
+    signal: controller.signal,
+    headers: { "User-Agent": "CF-IP-Collector/3.0 IPv6-Enhanced" } // 版本升级
+  });
+  clearTimeout(tid);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.text();
+}
+/* ====================== 测速函数 —— 支持 IPv4、IPv6 和域名 ====================== */
+async function testIPLatency(addressWithPort, timeout = 10000) {
+  let attempts = 0;
+  const maxAttempts = 1;
+  // 确保 IPv6 地址有正确的格式
+  let formattedAddress = addressWithPort;
+  const parsed = parseAddressWithPort(addressWithPort);
+  if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
+    formattedAddress = `[${parsed.address}]:${parsed.port}`;
+  }
+  while (attempts < maxAttempts) {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), timeout);
-    const resp = await fetch(url, {
-      signal: controller.signal,
-      headers: { "User-Agent": "CF-IP-Collector/3.0 IPv6-Enhanced" } // 版本升级
-    });
-    clearTimeout(tid);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return await resp.text();
-  }
-  /* ====================== 测速函数 —— 支持 IPv4、IPv6 和域名 ====================== */
-  async function testIPLatency(addressWithPort, timeout = 10000) {
-    let attempts = 0;
-    const maxAttempts = 1;
-    // 确保 IPv6 地址有正确的格式
-    let formattedAddress = addressWithPort;
-    const parsed = parseAddressWithPort(addressWithPort);
-    if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
-      formattedAddress = `[${parsed.address}]:${parsed.port}`;
+    try {
+      const start = performance.now();
+      const resp = await fetch("https://speed.cloudflare.com/__down?bytes=500000", {
+        signal: controller.signal,
+        headers: { Host: "speed.cloudflare.com" },
+        cf: { resolveOverride: formattedAddress } // Cloudflare 支持 IP:PORT、[IPv6]:PORT 和域名:PORT
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      await resp.arrayBuffer();
+      const latency = performance.now() - start;
+      return { success: true, latency: Math.round(latency) };
+    } catch (error) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        return { success: false, latency: null };
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } finally {
+      clearTimeout(tid);
     }
-    while (attempts < maxAttempts) {
-      const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), timeout);
+  }
+  return { success: false, latency: null };
+}
+async function batchTestLatency(addresses, concurrency = 4) {
+  const results = new Array(addresses.length);
+  for (let i = 0; i < addresses.length; i += concurrency) {
+    const batch = addresses.slice(i, i + concurrency);
+    await Promise.all(
+      batch.map(async (addr, idx) => {
+        const res = await testIPLatency(addr);
+        results[i + idx] = res;
+        await new Promise(r => setTimeout(r, 500));
+      })
+    );
+  }
+  return results;
+}
+/* ====================== 清理旧历史数据 ====================== */
+async function cleanupOldIPs(env) {
+const LIST_LIMIT = 100;
+let cursor = null;
+const historyItems = []; // { name, date, size }
+let totalSize = 0;
+const now = Date.now();
+const oneWeekAgo = now - 2 * 24 * 60 * 60 * 1000; // 改成真正的 2 天
+
+// 第一步：分页读取所有 key 并计算大小
+do {
+  const list = await env.IP_STORAGE.list({
+    prefix: "cloudflare_ips_",
+    limit: LIST_LIMIT,
+    cursor
+  });
+
+  // 并行获取值并计算大小（加速）
+  const fetchPromises = list.keys.map(async (key) => {
+    const date = parseTimestampKey(key.name);
+    if (!date) return null;
+
+    const value = await env.IP_STORAGE.get(key.name);
+    if (!value) return null;
+
+    const size = new TextEncoder().encode(value).length;
+    return { name: key.name, date, size };
+  });
+
+  const items = (await Promise.all(fetchPromises)).filter(Boolean);
+  for (const item of items) {
+    historyItems.push(item);
+    totalSize += item.size;
+  }
+
+  cursor = list.cursor;
+} while (cursor);
+
+console.log(`KV total size (cloudflare_ips_*) = ${totalSize} bytes`);
+if (historyItems.length <= 10) {
+  console.log("少于10条记录，无需清理");
+  return;
+}
+
+// 按时间降序（新→旧）
+historyItems.sort((a, b) => b.date - a.date);
+
+const toDelete = new Set();
+
+// 规则1：超过7天的直接删除（即使在前10条之外）
+for (let i = 10; i < historyItems.length; i++) {
+  if (historyItems[i].date <= oneWeekAgo) {
+    toDelete.add(historyItems[i].name);
+  }
+}
+
+// 规则2：总大小超 1MB，继续删最旧的，直到 < 1MB（保留至少10条最新）
+let currentSize = totalSize;
+for (let i = historyItems.length - 1; i >= 10; i--) { // 从最旧的开始删
+  if (currentSize <= 1_000_000) break;
+
+  const item = historyItems[i];
+  if (!toDelete.has(item.name)) {
+    toDelete.add(item.name);
+    currentSize -= item.size;
+  }
+}
+
+if (toDelete.size > 0) {
+  console.log(`Deleting ${toDelete.size} old entries`);
+  // 正确方式：并行删除单个 key
+  await Promise.all(
+    Array.from(toDelete).map(key => env.IP_STORAGE.delete(key))
+  );
+} else {
+  console.log("无需删除任何记录");
+}
+}
+/* ====================== 来源管理 ====================== */
+const defaultUrls = [
+  "https://ip.164746.xyz",
+  "https://ip.haogege.xyz/",
+  "https://stock.hostmonit.com/CloudFlareYes",
+  "https://api.uouin.com/cloudflare.html",
+  "https://addressesapi.090227.xyz/CloudFlareYes",
+  "https://addressesapi.090227.xyz/ip.164746.xyz",
+  "https://www.wetest.vip/page/cloudflare/address_v4.html"
+];
+async function getSources(env) {
+  const raw = await env.IP_STORAGE.get("sources_urls");
+  return raw ? JSON.parse(raw) : defaultUrls;
+}
+async function handleSetSources(req, env) {
+  const { sources } = await req.json();
+  if (!Array.isArray(sources) || sources.some(s => typeof s !== 'string')) {
+    return jsonResponse({ error: "Invalid sources: must be an array of strings" }, 400);
+  }
+  await env.IP_STORAGE.put("sources_urls", JSON.stringify(sources));
+  return jsonResponse({ success: true });
+}
+/* ====================== 黑名单管理 ====================== */
+async function getBlacklist(env) {
+  const raw = await env.IP_STORAGE.get("blacklist_addresses");
+  return raw ? JSON.parse(raw) : [];
+}
+async function handleSetBlacklist(req, env) {
+  const { blacklist } = await req.json();
+  if (!Array.isArray(blacklist)) {
+    return jsonResponse({ error: "Invalid blacklist: must be an array of strings" }, 400);
+  }
+  await env.IP_STORAGE.put("blacklist_addresses", JSON.stringify(blacklist));
+  return jsonResponse({ success: true });
+}
+/* ====================== 数据读取核心逻辑 ====================== */
+async function getStoredIPsLatest(env) {
+  let latestKey = null;
+  let latestDate = null;
+  const LIST_LIMIT = 1000; // 增大limit
+  const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
+  for (const key of list.keys) {
+    const date = parseTimestampKey(key.name);
+    if (date && (!latestDate || date > latestDate)) {
+      latestDate = date;
+      latestKey = key.name;
+    }
+  }
+  if (latestKey) {
+    const raw = await env.IP_STORAGE.get(latestKey);
+    if (raw) {
       try {
-        const start = performance.now();
-        const resp = await fetch("https://speed.cloudflare.com/__down?bytes=500000", {
-          signal: controller.signal,
-          headers: { Host: "speed.cloudflare.com" },
-          cf: { resolveOverride: formattedAddress } // Cloudflare 支持 IP:PORT、[IPv6]:PORT 和域名:PORT
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        await resp.arrayBuffer();
-        const latency = performance.now() - start;
-        return { success: true, latency: Math.round(latency) };
-      } catch (error) {
-        attempts++;
-        if (attempts >= maxAttempts) {
-          return { success: false, latency: null };
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } finally {
-        clearTimeout(tid);
+        const parsed = JSON.parse(raw);
+        parsed._sourceKey = latestKey;
+        return parsed;
+      } catch (e) {
+        console.warn(`Failed to parse ${latestKey}:`, e);
       }
     }
-    return { success: false, latency: null };
   }
-  async function batchTestLatency(addresses, concurrency = 4) {
-    const results = new Array(addresses.length);
-    for (let i = 0; i < addresses.length; i += concurrency) {
-      const batch = addresses.slice(i, i + concurrency);
-      await Promise.all(
-        batch.map(async (addr, idx) => {
-          const res = await testIPLatency(addr);
-          results[i + idx] = res;
-          await new Promise(r => setTimeout(r, 500));
-        })
-      );
-    }
-    return results;
-  }
-  /* ====================== 清理旧历史数据 ====================== */
-async function cleanupOldIPs(env) {
-  const LIST_LIMIT = 100;
+  const legacyRaw = await env.IP_STORAGE.get("cloudflare_ips");
+  return legacyRaw ? JSON.parse(legacyRaw) : { ips: [], count: 0, lastUpdated: null, sources: [] };
+}
+// 优化：批量获取KV值，使用Promise.all减少IO等待时间
+async function batchGetKV(env, keys) {
+  const promises = keys.map(key => env.IP_STORAGE.get(key.name));
+  const values = await Promise.all(promises);
+  return values.map((value, idx) => ({ key: keys[idx], value }));
+}
+
+async function getAllUniqueIPCount(env) {
+  const blacklistRaw = await getBlacklist(env);
+  const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
+  const allIPs = new Set();
+  const LIST_LIMIT = 500; // 优化：减小limit，分页处理以避免单次list过多
   let cursor = null;
-  const historyItems = []; // { name, date, size }
-  let totalSize = 0;
-  const now = Date.now();
-  const oneWeekAgo = now - 2 * 24 * 60 * 60 * 1000; // 改成真正的 2 天
-
-  // 第一步：分页读取所有 key 并计算大小
+  const allKeys = [];
+  // 分页收集所有键
   do {
-    const list = await env.IP_STORAGE.list({
-      prefix: "cloudflare_ips_",
-      limit: LIST_LIMIT,
-      cursor
-    });
-
-    // 并行获取值并计算大小（加速）
-    const fetchPromises = list.keys.map(async (key) => {
-      const date = parseTimestampKey(key.name);
-      if (!date) return null;
-
-      const value = await env.IP_STORAGE.get(key.name);
-      if (!value) return null;
-
-      const size = new TextEncoder().encode(value).length;
-      return { name: key.name, date, size };
-    });
-
-    const items = (await Promise.all(fetchPromises)).filter(Boolean);
-    for (const item of items) {
-      historyItems.push(item);
-      totalSize += item.size;
-    }
-
+    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT, cursor });
+    list.keys.forEach(key => allKeys.push(key));
     cursor = list.cursor;
   } while (cursor);
 
-  console.log(`KV total size (cloudflare_ips_*) = ${totalSize} bytes`);
-  if (historyItems.length <= 10) {
-    console.log("少于10条记录，无需清理");
-    return;
-  }
-
-  // 按时间降序（新→旧）
-  historyItems.sort((a, b) => b.date - a.date);
-
-  const toDelete = new Set();
-
-  // 规则1：超过7天的直接删除（即使在前10条之外）
-  for (let i = 10; i < historyItems.length; i++) {
-    if (historyItems[i].date <= oneWeekAgo) {
-      toDelete.add(historyItems[i].name);
-    }
-  }
-
-  // 规则2：总大小超 1MB，继续删最旧的，直到 < 1MB（保留至少10条最新）
-  let currentSize = totalSize;
-  for (let i = historyItems.length - 1; i >= 10; i--) { // 从最旧的开始删
-    if (currentSize <= 1_000_000) break;
-
-    const item = historyItems[i];
-    if (!toDelete.has(item.name)) {
-      toDelete.add(item.name);
-      currentSize -= item.size;
-    }
-  }
-
-  if (toDelete.size > 0) {
-    console.log(`Deleting ${toDelete.size} old entries`);
-    // 正确方式：并行删除单个 key
-    await Promise.all(
-      Array.from(toDelete).map(key => env.IP_STORAGE.delete(key))
-    );
-  } else {
-    console.log("无需删除任何记录");
-  }
-}
-  /* ====================== 来源管理 ====================== */
-  const defaultUrls = [
-    "https://ip.164746.xyz",
-    "https://ip.haogege.xyz/",
-    "https://stock.hostmonit.com/CloudFlareYes",
-    "https://api.uouin.com/cloudflare.html",
-    "https://addressesapi.090227.xyz/CloudFlareYes",
-    "https://addressesapi.090227.xyz/ip.164746.xyz",
-    "https://www.wetest.vip/page/cloudflare/address_v4.html"
-  ];
-  async function getSources(env) {
-    const raw = await env.IP_STORAGE.get("sources_urls");
-    return raw ? JSON.parse(raw) : defaultUrls;
-  }
-  async function handleSetSources(req, env) {
-    const { sources } = await req.json();
-    if (!Array.isArray(sources) || sources.some(s => typeof s !== 'string')) {
-      return jsonResponse({ error: "Invalid sources: must be an array of strings" }, 400);
-    }
-    await env.IP_STORAGE.put("sources_urls", JSON.stringify(sources));
-    return jsonResponse({ success: true });
-  }
-  /* ====================== 黑名单管理 ====================== */
-  async function getBlacklist(env) {
-    const raw = await env.IP_STORAGE.get("blacklist_addresses");
-    return raw ? JSON.parse(raw) : [];
-  }
-  async function handleSetBlacklist(req, env) {
-    const { blacklist } = await req.json();
-    if (!Array.isArray(blacklist)) {
-      return jsonResponse({ error: "Invalid blacklist: must be an array of strings" }, 400);
-    }
-    await env.IP_STORAGE.put("blacklist_addresses", JSON.stringify(blacklist));
-    return jsonResponse({ success: true });
-  }
-  /* ====================== 数据读取核心逻辑 ====================== */
-  async function getStoredIPsLatest(env) {
-    let latestKey = null;
-    let latestDate = null;
-    const LIST_LIMIT = 1000; // 增大limit
-    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
-    for (const key of list.keys) {
-      const date = parseTimestampKey(key.name);
-      if (date && (!latestDate || date > latestDate)) {
-        latestDate = date;
-        latestKey = key.name;
-      }
-    }
-    if (latestKey) {
-      const raw = await env.IP_STORAGE.get(latestKey);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          parsed._sourceKey = latestKey;
-          return parsed;
-        } catch (e) {
-          console.warn(`Failed to parse ${latestKey}:`, e);
-        }
-      }
-    }
-    const legacyRaw = await env.IP_STORAGE.get("cloudflare_ips");
-    return legacyRaw ? JSON.parse(legacyRaw) : { ips: [], count: 0, lastUpdated: null, sources: [] };
-  }
-  // 优化：批量获取KV值，使用Promise.all减少IO等待时间
-  async function batchGetKV(env, keys) {
-    const promises = keys.map(key => env.IP_STORAGE.get(key.name));
-    const values = await Promise.all(promises);
-    return values.map((value, idx) => ({ key: keys[idx], value }));
-  }
-
-  async function getAllUniqueIPCount(env) {
-    const blacklistRaw = await getBlacklist(env);
-    const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
-    const allIPs = new Set();
-    const LIST_LIMIT = 500; // 优化：减小limit，分页处理以避免单次list过多
-    let cursor = null;
-    const allKeys = [];
-    // 分页收集所有键
-    do {
-      const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT, cursor });
-      list.keys.forEach(key => allKeys.push(key));
-      cursor = list.cursor;
-    } while (cursor);
-
-    // 批量获取值（分批以避免内存峰值）
-    const BATCH_SIZE = 10; // 每个批次处理10个键
-    for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
-      const batchKeys = allKeys.slice(i, i + BATCH_SIZE);
-      const batchResults = await batchGetKV(env, batchKeys);
-      batchResults.forEach(({ key, value }) => {
-        if (!value) return;
-        try {
-          const data = JSON.parse(value);
-          if (data.ips && Array.isArray(data.ips)) {
-            data.ips.forEach(item => {
-              if (item && item.address && !isBlacklisted(item.address, blacklistPreprocessed)) {
-                allIPs.add(item.address);
-              }
-            });
-          }
-        } catch (e) {
-          console.warn(`Skip bad history ${key.name}:`, e);
-        }
-      });
-      // 小延迟避免CPU峰值
-      if (i + BATCH_SIZE < allKeys.length) await new Promise(r => setTimeout(r, 10));
-    }
-    return allIPs.size;
-  }
-  async function getIPsWithFallback(env, limit = null) {
-    const blacklistRaw = await getBlacklist(env);
-    const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
-    const historicalData = await getRecentHistoryData(env, 10);
-    if (historicalData.length === 0) {
-      return {
-        ips: [],
-        count: 0,
-        lastUpdated: new Date().toISOString(),
-        sources: [],
-        originalCount: 0,
-        blacklist: blacklistRaw
-      };
-    }
-
-    const latest = historicalData[0]; // 最新批次
-    const result = [];
-    const addressSet = new Set(); // 使用Set优化内存和去重
-
-    // Step 1: 优先处理最新批次
-    let latestIPs = (latest.ips || []).filter(item => item && item.address); // 优化：确保item存在
-
-    // 优化黑名单过滤：使用预处理后的结构
-    latestIPs = latestIPs.filter(item => !isBlacklisted(item.address, blacklistPreprocessed));
-
-    // 按延迟升序排序（无延迟的排后面）
-    latestIPs.sort((a, b) => {
-      if (a.latency && b.latency) return a.latency - b.latency;
-      if (a.latency) return -1;
-      if (b.latency) return 1;
-      return 0;
-    });
-
-    // 加入最新批次的所有 IP（保持延迟排序）
-    latestIPs.forEach(item => {
-      if (!addressSet.has(item.address)) {
-        addressSet.add(item.address);
-        result.push(item);
-      }
-    });
-
-    const filteredLatestCount = latestIPs.length;
-
-    // Step 2: 判断是否需要补齐
-    if (limit === null || limit <= 0 || result.length >= limit) {
-      // 不限制 或 已足够 → 直接截取前 limit（如果有限制）
-      if (limit > 0 && result.length > limit) {
-        result.splice(limit);
-      }
-      return {
-        ips: result,
-        count: result.length,
-        lastUpdated: latest.lastUpdated || new Date().toISOString(),
-        sources: latest.sources || [],
-        originalCount: filteredLatestCount,
-        blacklist: blacklistRaw
-      };
-    }
-
-    // Step 3: 需要补齐（limit > 最新批次数量）
-    const need = limit - result.length;
-    const TOP_N = 50; // 限制每个历史批次top N
-
-    let added = 0;
-    for (let i = 1; i < historicalData.length && added < need; i++) {
-      const batch = historicalData[i];
-      if (!batch.ips || !Array.isArray(batch.ips)) continue;
-
-      // 优化黑名单过滤：使用预处理后的结构
-      let filteredBatch = batch.ips.filter(item => item && item.address && !isBlacklisted(item.address, blacklistPreprocessed)); // 优化：确保item存在
-
-      // 每个历史批次也按延迟排序后取top N
-      const sortedBatch = [...filteredBatch].sort((a, b) => {
-        if (a.latency && b.latency) return a.latency - b.latency;
-        if (a.latency) return -1;
-        if (b.latency) return 1;
-        return 0;
-      }).slice(0, TOP_N);
-
-      for (const item of sortedBatch) {
-        if (!addressSet.has(item.address)) {
-          addressSet.add(item.address);
-          result.push(item);
-          added++;
-          if (added >= need) break;
-        }
-      }
-    }
-
-    return {
-      ips: result,
-      count: result.length,
-      lastUpdated: latest.lastUpdated || new Date().toISOString(),
-      sources: latest.sources || [],
-      originalCount: filteredLatestCount,
-      blacklist: blacklistRaw
-    };
-  }
-  /* ====================== 页面与接口 ====================== */
-  async function serveHTML(env, request) {
-    const latest = await getStoredIPsLatest(env);
-    const totalUnique = await getAllUniqueIPCount(env);
-    const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
-    const displayData = await getIPsWithFallback(env, limit);
-    // 确保显示数据中的每个IP都有位置信息
-    displayData.ips.forEach(ip => {
-      if (!ip.location) ip.location = "未知";
-    });
-    const data = {
-      ...latest,
-      limit,
-      sources_urls: await getSources(env),
-      blacklist: displayData.blacklist,
-      totalUniqueIPs: totalUnique,
-      ips: displayData.ips,
-      count: displayData.count,
-      originalCount: displayData.originalCount || 0,
-    };
-    const html = `<!DOCTYPE html>
-  <html lang="zh-CN">
-  <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>🌐 Cloudflare 优质 IP/域名 收集器</title>
-      <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; background: #f8fafc; color: #334155; min-height: 100vh; padding: 20px; }
-          .container { max-width: 1200px; margin: 0 auto; }
-          .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; }
-          .header-content h1 { font-size: 2.5rem; background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; font-weight: 700; }
-          .header-content p { color: #64748b; font-size: 1.1rem; }
-          .social-links { display: flex; gap: 15px; }
-          .social-link { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: white; border: 1px solid #e2e8f0; transition: all 0.3s ease; text-decoration: none; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-          .social-link:hover { background: #f8fafc; transform: translateY(-2px); border-color: #cbd5e1; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-          .social-link.youtube { color: #dc2626; }
-          .social-link.youtube:hover { background: #fef2f2; border-color: #fecaca; }
-          .social-link.github { color: #1f2937; }
-          .social-link.telegram { color: #3b82f6; }
-          .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
-          .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-          .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
-          .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
-          .stat { background: #f8fafc; padding: 20px; border-radius: 12px; text-align: center; border: 1px solid #e2e8f0; }
-          .stat-value { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
-          .stat-value.recent { color: #3b82f6; }
-          .stat-value.total { color: #10b981; }
-          .stat-value.time { color: #6b7280; }
-          .button-group { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
-          .button { padding: 12px 20px; border: none; border-radius: 10px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: all 0.3s ease; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; background: #3b82f6; color: white; border: 1px solid #3b82f6; }
-          .button:hover { background: #2563eb; border-color: #2563eb; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(59,130,246,0.3); }
-          .button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
-          .button-success { background: #10b981; border-color: #10b981; }
-          .button-success:hover { background: #059669; border-color: #059669; box-shadow: 0 4px 8px rgba(16,185,129,0.3); }
-          .button-warning { background: #f59e0b; border-color: #f59e0b; }
-          .button-warning:hover { background: #d97706; border-color: #d97706; box-shadow: 0 4px 8px rgba(245,158,11,0.3); }
-          .button-secondary { background: white; color: #475569; border-color: #cbd5e1; }
-          .button-secondary:hover { background: #f8fafc; border-color: #94a3b8; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-          .ip-list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
-          .sources-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
-          .ip-list { background: #f8fafc; border-radius: 12px; padding: 20px; max-height: 500px; overflow-y: auto; border: 1px solid #e2e8f0; }
-          .ip-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; transition: background 0.3s ease; }
-          .ip-item:hover { background: #f1f5f9; }
-          .ip-item:last-child { border-bottom: none; }
-          .ip-info { display: flex; align-items: center; gap: 16px; }
-          .ip-address { font-family: 'SF Mono', 'Courier New', monospace; font-weight: 600; min-width: 140px; color: #1e293b; word-break: break-all; }
-          .speed-result { font-size: 0.85rem; padding: 4px 12px; border-radius: 8px; background: #e2e8f0; min-width: 70px; text-align: center; font-weight: 600; }
-          .speed-fast { background: #d1fae5; color: #065f46; }
-          .speed-medium { background: #fef3c7; color: #92400e; }
-          .speed-slow { background: #fee2e2; color: #991b1b; }
-          .action-buttons { display: flex; gap: 8px; }
-          .small-btn { padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; border: 1px solid #cbd5e1; background: white; color: #475569; cursor: pointer; transition: all 0.3s ease; }
-          .small-btn:hover { background: #f8fafc; border-color: #94a3b8; }
-          .small-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-          .loading { display: none; text-align: center; padding: 30px; }
-          .spinner { border: 3px solid #e2e8f0; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 16px; }
-          @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-          .result { margin: 20px 0; padding: 16px 20px; border-radius: 12px; display: none; border-left: 4px solid; }
-          .success { background: #d1fae5; color: #065f46; border-left-color: #10b981; }
-          .error { background: #fee2e2; color: #991b1b; border-left-color: #ef4444; }
-          .speed-test-progress { margin: 16px 0; background: #e2e8f0; border-radius: 8px; height: 8px; overflow: hidden; display: none; }
-          .speed-test-progress-bar { background: linear-gradient(90deg, #3b82f6, #06b6d4); height: 100%; width: 0%; transition: width 0.3s ease; }
-          .sources { display: grid; gap: 12px; }
-          .source { padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #10b981; }
-          .source.error { border-left-color: #ef4444; }
-          .footer { text-align: center; margin-top: 40px; padding-top: 30px; border-top: 1px solid #e2e8f0; color: #64748b; }
-          .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 1000; justify-content: center; align-items: center; }
-          .modal-content { background: white; padding: 30px; border-radius: 16px; max-width: 500px; width: 90%; border: 1px solid #e2e8f0; box-shadow: 0 20px 25px rgba(0,0,0,0.1); }
-          .modal h3 { margin-bottom: 16px; color: #1e40af; }
-          .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
-          @media (max-width: 768px) {
-              .header { flex-direction: column; gap: 20px; text-align: center; }
-              .header-content h1 { font-size: 2rem; }
-              .button-group { flex-direction: column; }
-              .button { width: 100%; justify-content: center; }
-              .ip-item { flex-direction: column; align-items: flex-start; gap: 12px; }
-              .ip-info { width: 100%; justify-content: space-between; }
-              .action-buttons { width: 100%; justify-content: flex-end; }
-              .modal-buttons { flex-direction: column; }
-          }
-      </style>
-  </head>
-  <body>
-      <div class="container">
-          <div class="header">
-              <div class="header-content">
-                  <h1>🌐 Cloudflare IP/域名 收集器</h1>
-                  <p>网络加速专家 | 智能测速与优化</p>
-              </div>
-              <div class="social-links">
-                  <a href="https://youtu.be/rZl2jz--Oes" target="_blank" title="好软推荐" class="social-link youtube">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.546 12 3.546 12 3.546s-7.505 0-9.377.504A3.016 3.016 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.504 9.376.504 9.376.504s7.505 0 9.377-.504a3.016 3.016 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12 9.545 15.568z"/>
-                      </svg>
-                  </a>
-                  <a href="https://github.com/ethgan/CF-Worker-BestIP-collector" target="_blank" title="GitHub" class="social-link github">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.085 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                      </svg>
-                  </a>
-                  <a href="https://t.me/yt_hytj" target="_blank" title="Telegram" class="social-link telegram">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="m7.06510669 16.9258959c5.22739451-2.1065178 8.71314291-3.4952633 10.45724521-4.1662364 4.9797665-1.9157646 6.0145193-2.2485535 6.6889567-2.2595423.1483363-.0024169.480005.0315855.6948461.192827.1814076.1361492.23132.3200675.2552048.4491519.0238847.1290844.0536269.4231419.0299841.65291-.2698553 2.6225356-1.4375148 8.986738-2.0315537 11.9240228-.2513602 1.2428753-.7499132 1.5088847-1.2290685 1.5496672-1.0413153.0886298-1.8284257-.4857912-2.8369905-1.0972863-1.5782048-.9568691-2.5327083-1.3984317-4.0646293-2.3321592-1.7703998-1.0790837-.212559-1.583655.7963867-2.5529189.2640459-.2536609 4.7753906-4.3097041 4.755976-4.431706-.0070494-.0442984-.1409018-.481649-.2457499-.5678447-.104848-.0861957-.2595946-.0567202-.3712641-.033278-.1582881.0332286-2.6794907 1.5745492-7.5636077 4.6239616-.715635.4545193-1.3638349.6759763-1.9445998.6643712-.64024672-.0127938-1.87182452-.334829-2.78737602-.6100966-1.11296117-.3376271-1.53748501-.4966332-1.45976769-1.0700283.04048-.2986597.32581586-.610598.8560076-.935815z"/>
-                      </svg>
-                  </a>
-              </div>
-          </div>
-          <div class="card">
-              <h2>📊 系统状态</h2>
-              <div class="stats">
-                  <div class="stat"><div class="stat-value recent" id="recent-count">${data.originalCount || 0}</div><div>最近更新数量</div></div>
-                  <div class="stat"><div class="stat-value total" id="total-count">${data.totalUniqueIPs.toLocaleString()}</div><div>全部数量</div></div>
-                  <div class="stat"><div class="stat-value time" id="last-time">${data.lastUpdated ? new Date(data.lastUpdated).toLocaleTimeString() : '从未更新'}</div><div>更新时间</div></div>
-              </div>
-              <div class="button-group">
-                  <button class="button" onclick="updateIPs()" id="update-btn">🔄 立即更新</button>
-                  <a href="/ips" class="button button-success" download="cloudflare_ips.txt">📥 下载列表</a>
-                  <a href="/ip.txt" class="button button-secondary" target="_blank">🔗 查看文本</a>
-                  <button class="button button-warning" onclick="startSpeedTest()" id="speedtest-btn">⚡ 开始测速</button>
-                  <button class="button" onclick="openItdogModal()">🌐 ITDog 测速</button>
-                  <button class="button button-secondary" onclick="refreshData()">🔄 刷新状态</button>
-                  <input type="number" id="ip-limit-input" min="1" placeholder="IP数量" style="padding: 12px; border-radius: 10px; border: 1px solid #cbd5e1; width: 120px; font-size: 0.95rem;" value="${data.limit || ''}">
-                  <button class="button" onclick="setIpLimit()" id="set-limit-btn">⚙️ 设置数量</button>
-              </div>
-              <div class="loading" id="loading"><div class="spinner"></div><p>正在从多个来源收集 IP/域名 地址，请稍候...</p></div>
-              <div class="result" id="result"></div>
-          </div>
-          <div class="card">
-              <div class="ip-list-header">
-                  <h2>📋 IP/域名 地址列表</h2>
-                  <div>
-                      <button class="small-btn" onclick="copyAllIPs()">📋 复制全部</button>
-                      <button class="small-btn" onclick="sortBySpeed()" id="sort-btn">🔽 按速度排序</button>
-                  </div>
-              </div>
-              <div class="speed-test-progress" id="speed-test-progress">
-                  <div class="speed-test-progress-bar" id="speed-test-progress-bar"></div>
-              </div>
-              <div style="text-align: center; margin: 8px 0; font-size: 0.9rem; color: #64748b;" id="speed-test-status">准备测速...</div>
-              <div class="ip-list" id="ip-list">
-                  ${data.ips && data.ips.length > 0 ? data.ips.map(item => {
-                    // 确保 address 存在，使用安全默认值
-                    const address = item?.address || 'unknown';
-                    // 优化：用 btoa 作为 safeId，避免特殊字符
-                    const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-                    let typeBadge = '';
-                    // 添加类型角标
-                    const parsed = parseAddressWithPort(address);
-                    if (parsed.type === 'ipv6') {
-                      typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
-                    } else if (parsed.type === 'ipv4') {
-                      typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
-                    } else if (parsed.type === 'domain') {
-                      typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
-                    }
-                    // 格式化显示地址 - 只在端口不是443时显示端口
-                    let displayAddress = parsed.address;
-                    if (parsed.port !== "443") {
-                      if (parsed.type === 'ipv6') {
-                        displayAddress = `[${displayAddress}]:${parsed.port}`;
-                      } else {
-                        displayAddress = `${displayAddress}:${parsed.port}`;
-                      }
-                    } else {
-                      if (parsed.type === 'ipv6' && !address.startsWith('[')) {
-                        displayAddress = `[${displayAddress}]`;
-                      }
-                    }
-                    return `
-                      <div class="ip-item" data-ip="${address}">
-                          <div class="ip-info">
-                              <span class="ip-address">${displayAddress}#${item?.location || '未知'}${typeBadge}</span>
-                              <span class="speed-result" id="speed-${safeId}">${item?.latency ? Math.round(item.latency) + 'ms' : '-'}</span>
-                          </div>
-                          <div class="action-buttons">
-                              <button class="small-btn" onclick="testSingleIP('${address.replace(/'/g, "\\'")}')" id="test-${safeId}">测速</button>
-                              <button class="small-btn" onclick="copyIP('${displayAddress.replace(/'/g, "\\'")}', '${(item?.location || '未知').replace(/'/g, "\\'")}', ${item?.latency || 'null'})">复制</button>
-                          </div>
-                      </div>
-                    `;
-                  }).join('') : '<p style="text-align: center; color: #64748b; padding: 40px;">暂无 IP/域名 地址数据，请点击更新按钮获取</p>'}
-              </div>
-          </div>
-            <div class="card">
-                <div class="sources-header">
-                    <h2>🌍 数据来源状态</h2>
-                    <button class="button" onclick="openSourcesModal()">⚙️ 设置来源</button>
-                    <button class="button" onclick="openBlacklistModal()">◼️ 黑名单</button>
-                </div>
-                <div class="sources" id="sources">
-                    ${data.sources ? data.sources.map(source => {
-      let displayName = source.name;
+  // 批量获取值（分批以避免内存峰值）
+  const BATCH_SIZE = 10; // 每个批次处理10个键
+  for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
+    const batchKeys = allKeys.slice(i, i + BATCH_SIZE);
+    const batchResults = await batchGetKV(env, batchKeys);
+    batchResults.forEach(({ key, value }) => {
+      if (!value) return;
       try {
-        displayName = new URL(source.name).hostname;
-      } catch (_) {}
-      return `
-        <div class="source ${source.status === 'success' ? '' : 'error'}">
-            <strong>${displayName}</strong>: 
-            ${source.status === 'success' ? '成功获取 ' + source.count + ' 个地址' : '失败: ' + source.error}
-        </div>
-      `;
-    }).join('') : '<p style="color: #64748b;">暂无数据来源信息</p>'}
-                </div>
-            </div>
-          <div class="footer">
-              <p>Cloudflare IP/域名 Collector © ${new Date().getFullYear()} | 增强版：完美支持 IPv6 和域名</p>
-          </div>
-      </div>
-      <div class="modal" id="itdog-modal">
-          <div class="modal-content">
-              <h3>🌐 ITDog 批量 TCPing 测速</h3>
-              <p>ITDog.cn 提供了从多个国内监测点进行 TCPing 测速的功能，可以更准确地测试 IP 在国内的连通性。</p>
-              <p><strong>使用方法：</strong></p>
-              <ol style="margin-left: 20px; margin-bottom: 16px;">
-                  <li>点击下方按钮复制所有 IPv4 地址</li>
-                  <li>打开 ITDog 批量 TCPing 页面</li>
-                  <li>将复制的 IP 粘贴到输入框中</li>
-                  <li>点击开始测试按钮</li>
-              </ol>
-              <p><strong>注意：</strong> ITDog 免费版可能有 IP 数量限制，如果 IP 过多请分批测试。</p>
-              <div class="modal-buttons">
-                  <button class="button button-secondary" onclick="closeItdogModal()">取消</button>
-                  <button class="button" onclick="copyIPsForItdog()">复制 IPv4 列表</button>
-                  <a href="https://www.itdog.cn/batch_tcping/" class="button button-success" target="_blank">打开 ITDog</a>
-              </div>
-          </div>
-      </div>
-      <div class="modal" id="sources-modal">
-          <div class="modal-content">
-              <h3>⚙️ 设置数据来源</h3>
-              <p>编辑来源 URL，每行一个。保存后将使用这些来源更新 IP/域名。</p>
-              <textarea id="sources-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${(data.sources_urls || []).join('\\n')}</textarea>
-              <div class="modal-buttons">
-                  <button class="button button-secondary" onclick="closeSourcesModal()">取消</button>
-                  <button class="button button-success" onclick="saveSources()">保存</button>
-              </div>
-          </div>
-      </div>
-      <div class="modal" id="blacklist-modal">
-          <div class="modal-content">
-              <h3>◼️ 黑名单管理</h3>
-              <p>输入需要排除的 IPv4/IPv6/域名 地址，每行一个。保存后将在所有页面中过滤这些地址。</p>
-              <p><strong>增强功能：</strong> 用双引号包围域名（如 "example.com"）将过滤所有该域名的子域名（如 sub.example.com）。</p>
-              <textarea id="blacklist-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${data.blacklist.join('\\n')}</textarea>
-              <div class="modal-buttons">
-                  <button class="button button-secondary" onclick="closeBlacklistModal()">取消</button>
-                  <button class="button button-success" onclick="saveBlacklist()">保存</button>
-              </div>
-          </div>
-      </div>
-      <script>
-          // 解析地址类型
-          function parseAddressWithPort(address) {
-            let addrPart, portPart = "443";
-            // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
-            if (address.startsWith('[') && address.includes(']:')) {
-              const ipv6End = address.indexOf(']');
-              addrPart = address.substring(1, ipv6End);
-              portPart = address.substring(ipv6End + 2) || "443";
-              return { address: addrPart, port: portPart, type: 'ipv6' };
+        const data = JSON.parse(value);
+        if (data.ips && Array.isArray(data.ips)) {
+          data.ips.forEach(item => {
+            if (item && item.address && !isBlacklisted(item.address, blacklistPreprocessed)) {
+              allIPs.add(item.address);
             }
-            // 处理常规地址
-            const parts = address.split(':');
-            // IPv6 地址没有端口 (没有方括号)
-            if (parts.length > 2 && !address.includes('[')) {
-              return { address: address, port: "443", type: 'ipv6' };
-            }
-            // IPv4 或域名
-            if (parts.length === 1) {
-              addrPart = parts[0];
-              // 检查是否为 IPv4
-              const octets = addrPart.split('.');
-              if (octets.length === 4) {
-                const isValid = octets.every(oct => {
-                  const num = parseInt(oct, 10);
-                  return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
-                });
-                if (isValid) {
-                  return { address: addrPart, port: "443", type: 'ipv4' };
-                }
-              }
-              // 检查是否为 IPv6
-              if (/^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$/.test(addrPart)) {
-                return { address: addrPart, port: "443", type: 'ipv6' };
-              }
-              // 否则假设为域名
-              return { address: addrPart, port: "443", type: 'domain' };
-            }
-            // 域名:port 或 IPv4:port
-            if (parts.length === 2) {
-              addrPart = parts[0];
-              portPart = parts[1];
-              // 检查是否为 IPv4
-              const octets = addrPart.split('.');
-              if (octets.length === 4) {
-                const isValid = octets.every(oct => {
-                  const num = parseInt(oct, 10);
-                  return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
-                });
-                if (isValid) {
-                  return { address: addrPart, port: portPart, type: 'ipv4' };
-                }
-              }
-              // 检查是否为 IPv6
-              if (/^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$/.test(addrPart)) {
-                return { address: addrPart, port: portPart, type: 'ipv6' };
-              }
-              // 否则假设为域名
-              return { address: addrPart, port: portPart, type: 'domain' };
-            }
-            return { address: address, port: "443", type: 'unknown' };
-          }
-          // 格式化地址输出
-          function formatAddressOutput(address, location, latency) {
-            const parsed = parseAddressWithPort(address);
-            const portPart = parsed.port !== "443" ? ':' + parsed.port : "";
-            const latencyPart = latency ? Math.round(latency) + 'ms' : "";
-            if (parsed.type === 'ipv6') {
-              return '[' + parsed.address + ']' + portPart + '#' + location + (latencyPart ? '_' + latencyPart : '');
-            } else if (parsed.type === 'domain') {
-              return parsed.address + portPart + '#' + parsed.address + (latencyPart ? '_' + latencyPart : '');
-            } else {
-              // IPv4
-              return parsed.address + portPart + '#' + location + (latencyPart ? '_' + latencyPart : '');
-            }
-          }
-          let speedResults = {};
-          let isTesting = false;
-          let currentTestIndex = 0;
-          let currentSourcesUrls = ${JSON.stringify(data.sources_urls || []).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')};
-          let currentBlacklist = ${JSON.stringify(data.blacklist || []).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')};
-          function showMessage(message, type) {
-              if (type === undefined) type = 'success';
-              const result = document.getElementById('result');
-              result.className = 'result ' + type;
-              result.innerHTML = '<p>' + message + '</p>';
-              result.style.display = 'block';
-              setTimeout(function() {
-                  result.style.display = 'none';
-              }, 3000);
-          }
-          function openItdogModal() { document.getElementById('itdog-modal').style.display = 'flex'; }
-          function closeItdogModal() { document.getElementById('itdog-modal').style.display = 'none'; }
-          async function copyIPsForItdog() {
-              try {
-                  const response = await fetch('/itdog-data');
-                  const data = await response.json();
-                  if (data.ips && data.ips.length > 0) {
-                      const ipText = data.ips.join('\\n');
-                      await navigator.clipboard.writeText(ipText);
-                      showMessage('已复制 IPv4 列表，请粘贴到 ITDog 网站');
-                      closeItdogModal();
-                  } else {
-                      showMessage('没有可测速的IP地址', 'error');
-                  }
-              } catch (error) {
-                  showMessage('获取 IP 列表失败', 'error');
-              }
-          }
-          function copyIP(address, location, latency) {
-              let text = formatAddressOutput(address, location, latency);
-              navigator.clipboard.writeText(text).then(function() {
-                  showMessage('已复制 地址: ' + text);
-              }).catch(function(err) {
-                  console.error('复制失败:', err);
-              });
-          }
-          function copyAllIPs() {
-              const ipItems = document.querySelectorAll('.ip-item');
-              if (!ipItems.length) return showMessage('没有可复制的地址', 'error');
-              const texts = Array.from(ipItems).map(function(item) {
-                  const address = item.dataset.ip;
-                  const location = item.querySelector('.ip-address').textContent.split('#')[1].split('_')[0];
-                  const latencyStr = item.querySelector('.speed-result').textContent;
-                  const latency = latencyStr.includes('ms') ? parseInt(latencyStr) : null;
-                  return formatAddressOutput(address, location, latency);
-              });
-              const allText = texts.join('\\n');
-              navigator.clipboard.writeText(allText).then(function() {
-                  showMessage('已复制 ' + ipItems.length + ' 个地址');
-              }).catch(function(err) {
-                  console.error('复制全部失败:', err);
-              });
-          }
-          async function testSingleIP(address) {
-              const item = document.querySelector('[data-ip="' + address + '"]');
-              if (!item) return showMessage('未找到地址元素', 'error');
-              const testBtn = item.querySelector('.small-btn[id^="test-"]');
-              const speedElement = item.querySelector('.speed-result');
-              const addressElement = item.querySelector('.ip-address');
-              if (!addressElement) return;
-
-              // 关键：从当前文本里提取类型角标（纯文本版）
-              let typeBadgeText = '';
-              if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
-              else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
-              else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
-
-              // 根据类型生成完整的带样式的角标 HTML
-              let typeBadge = '';
-              if (typeBadgeText === 'IPv6') {
-                  typeBadge = '<span style="background:#10b981;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv6</span>';
-              } else if (typeBadgeText === 'IPv4') {
-                  typeBadge = '<span style="background:#3b82f6;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv4</span>';
-              } else if (typeBadgeText === '域名') {
-                  typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
-              };
-              if (!testBtn || !speedElement || !addressElement) return showMessage('元素缺失，无法测速', 'error');
-              testBtn.disabled = true;
-              testBtn.textContent = '测试中...';
-              speedElement.textContent = '测试中...';
-              speedElement.className = 'speed-result';
-              try {
-                  const startTime = performance.now();
-                  const response = await fetch('/speedtest?ip=' + encodeURIComponent(address));
-                  if (!response.ok) throw new Error('HTTP ' + response.status);
-                  const data = await response.json();
-                  const latency = performance.now() - startTime;
-                  speedResults[address] = { latency: latency, success: data.success };
-                  if (data.success) {
-                      const rounded = Math.round(latency);
-                      const speedClass = rounded < 200 ? 'speed-fast' : rounded < 500 ? 'speed-medium' : 'speed-slow';
-                      speedElement.textContent = rounded + 'ms';
-                      speedElement.className = 'speed-result ' + speedClass;
-                      // 安全地更新地址元素文本
-                      const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
-                      addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
-                      showMessage('地址 ' + address + ' 测速完成: ' + rounded + 'ms');
-                  } else {
-                      speedElement.textContent = '失败';
-                      speedElement.className = 'speed-result speed-slow';
-                  }
-              } catch (error) {
-                  console.error('测速错误:', error);
-                  speedElement.textContent = '错误';
-                  speedElement.className = 'speed-result speed-slow';
-                  showMessage('地址 ' + address + ' 测速错误: ' + error.message, 'error');
-              } finally {
-                  testBtn.disabled = false;
-                  testBtn.textContent = '测速';
-                  // 强制重绘
-                  void speedElement.offsetHeight;
-              }
-          }
-          async function startSpeedTest() {
-              if (isTesting) return showMessage('测速正在进行中，请稍候...', 'error');
-              const ipItems = Array.from(document.querySelectorAll('.ip-item'));
-              if (ipItems.length === 0) return showMessage('没有可测速的地址', 'error');
-              const speedtestBtn = document.getElementById('speedtest-btn');
-              const progressBar = document.getElementById('speed-test-progress');
-              const progressBarInner = document.getElementById('speed-test-progress-bar');
-              const statusElement = document.getElementById('speed-test-status');
-              isTesting = true;
-              speedtestBtn.disabled = true;
-              speedtestBtn.textContent = '测速中...';
-              progressBar.style.display = 'block';
-              const totalIPs = ipItems.length;
-              currentTestIndex = 0;
-              // 重置所有速度结果显示
-              document.querySelectorAll('.speed-result').forEach(function(el) {
-                  el.textContent = '测试中...';
-                  el.className = 'speed-result';
-              });
-              // 禁用所有测速按钮
-              document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) { 
-                  if (btn) btn.disabled = true; 
-              });
-              for (let i = 0; i < totalIPs; i++) {
-                  if (!isTesting) break;
-                  const ipItem = ipItems[i];
-                  const address = ipItem.dataset.ip;
-                  if (!address) continue;
-                  statusElement.textContent = '正在测速 ' + (i+1) + '/' + totalIPs + ': ' + address;
-                  const startTime = performance.now();
-                  try {
-                      const response = await fetch('/speedtest?ip=' + encodeURIComponent(address));
-                      if (!response.ok) throw new Error('HTTP ' + response.status);
-                      const data = await response.json();
-                      const latency = performance.now() - startTime;
-                      const speedElement = ipItem.querySelector('.speed-result');
-                      const addressElement = ipItem.querySelector('.ip-address');		  
-                      if (!addressElement) return;
-
-                      // 关键：从当前文本里提取类型角标（纯文本版）
-                      let typeBadgeText = '';
-                      if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
-                      else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
-                      else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
-
-                      // 根据类型生成完整的带样式的角标 HTML
-                      let typeBadge = '';
-                      if (typeBadgeText === 'IPv6') {
-                          typeBadge = '<span style="background:#10b981;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv6</span>';
-                      } else if (typeBadgeText === 'IPv4') {
-                          typeBadge = '<span style="background:#3b82f6;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv4</span>';
-                      } else if (typeBadgeText === '域名') {
-                          typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
-                      };
-                      if (data.success) {
-                          const rounded = Math.round(latency);
-                          const speedClass = rounded < 200 ? 'speed-fast' : rounded < 500 ? 'speed-medium' : 'speed-slow';
-                          if (speedElement) {
-                              speedElement.textContent = rounded + 'ms';
-                              speedElement.className = 'speed-result ' + speedClass;
-                          }
-                          if (addressElement) {
-                              const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
-                              addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
-                          }
-                          speedResults[address] = { latency: rounded, success: true };
-                      } else {
-                          if (speedElement) {
-                              speedElement.textContent = '失败';
-                              speedElement.className = 'speed-result speed-slow';
-                          }
-                      }
-                      // 强制重绘
-                      if (speedElement) void speedElement.offsetHeight;
-                  } catch (error) {
-                      console.error('批量测速错误:', error);
-                      const speedElement = ipItem.querySelector('.speed-result');
-                      if (speedElement) {
-                          speedElement.textContent = '错误';
-                          speedElement.className = 'speed-result speed-slow';
-                      }
-                  }
-                  currentTestIndex = i + 1;
-                  progressBarInner.style.width = (currentTestIndex / totalIPs) * 100 + '%';
-                  // 添加延迟，避免对服务器造成过大压力
-                  await new Promise(function(r) { setTimeout(r, 700 / Math.max(totalIPs, 4)); });
-              }
-              isTesting = false;
-              speedtestBtn.disabled = false;
-              speedtestBtn.textContent = '⚡ 开始测速';
-              progressBar.style.display = 'none';
-              // 重新启用所有测速按钮
-              document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) { 
-                  if (btn) btn.disabled = false; 
-              });
-              sortBySpeed();
-              showMessage('测速完成，已测试 ' + currentTestIndex + ' 个地址，已按延迟排序');
-          }
-          function sortBySpeed() {
-              const ipList = document.getElementById('ip-list');
-              if (!ipList) return;
-              const ipItems = Array.from(ipList.querySelectorAll('.ip-item'));
-              ipItems.sort(function(a, b) {
-                  const ra = speedResults[a.dataset.ip];
-                  const rb = speedResults[b.dataset.ip];
-                  if (ra && rb) return ra.latency - rb.latency;
-                  if (ra) return -1;
-                  if (rb) return 1;
-                  return 0;
-              });
-              // 重新添加排序后的元素
-              ipItems.forEach(function(item) { 
-                  if (item && ipList) ipList.appendChild(item); 
-              });
-          }
-          async function updateIPs() {
-              const btn = document.getElementById('update-btn');
-              const loading = document.getElementById('loading');
-              const result = document.getElementById('result');
-              if (!btn || !loading || !result) return;
-              btn.disabled = true;
-              loading.style.display = 'block';
-              result.style.display = 'none';
-              try {
-                  const response = await fetch('/update', { method: 'POST' });
-                  const data = await response.json();
-                  if (data.success) {
-                      result.className = 'result success';
-                      result.innerHTML = '<h3>✅ 更新成功！</h3><p>耗时: ' + data.duration + '</p><p>本次唯一 地址: ' + data.totalIPs + '</p><p>新位置测试: ' + data.newLocationTested + '</p><p>新延迟测试: ' + data.newLatencyTested + '</p><p>历史键: ' + (data.historyKey || '—') + '</p><p>时间: ' + new Date(data.timestamp).toLocaleString() + '</p>';
-                  } else {
-                      result.className = 'result error';
-                      result.innerHTML = '<h3>❌ 更新失败</h3><p>' + (data.error || '未知错误') + '</p>';
-                  }
-                  result.style.display = 'block';
-                  setTimeout(refreshData, 1500);
-              } catch (error) {
-                  console.error('更新失败:', error);
-                  result.className = 'result error';
-                  result.innerHTML = '<h3>❌ 请求失败</h3><p>' + error.message + '</p>';
-                  result.style.display = 'block';
-              } finally {
-                  btn.disabled = false;
-                  loading.style.display = 'none';
-              }
-          }
-          async function setIpLimit() {
-              const input = document.getElementById('ip-limit-input');
-              const btn = document.getElementById('set-limit-btn');
-              if (!input || !btn) return;
-              if (input.disabled) {
-                  input.disabled = false;
-                  input.style.color = '';
-                  input.style.backgroundColor = '';
-                  input.focus();
-                  return;
-              }
-              const limitStr = input.value.trim();
-              let limit;
-              
-              if (limitStr === '' || limitStr === '0') {
-                  limit = 0; // 特殊值，表示使用默认
-              } else {
-                  limit = parseInt(limitStr);
-                  if (isNaN(limit) || limit < 1) {
-                      showMessage('无效的数量，请输入正整数或留空', 'error');
-                      return;
-                  }
-              }
-              
-              btn.disabled = true;
-              try {
-                  const response = await fetch('/set-limit', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ limit })
-                  });
-                  const data = await response.json();
-                  if (data.success) {
-                      if (limit === 0) {
-                          input.value = '';
-                          input.disabled = true;
-                          input.style.color = '#a0a0a0';
-                          input.style.backgroundColor = '#f0f0f0';
-                          showMessage('已重置为默认数量');
-                      } else {
-                          input.disabled = true;
-                          input.style.color = '#a0a0a0';
-                          input.style.backgroundColor = '#f0f0f0';
-                          showMessage('地址数量设置成功，将影响下载和查看文本');
-                      }
-                      setTimeout(refreshData, 1500);
-                  } else {
-                      showMessage('设置失败: ' + (data.error || '未知错误'), 'error');
-                  }
-              } catch (error) {
-                  console.error('设置数量失败:', error);
-                  showMessage('设置失败: ' + error.message, 'error');
-              } finally {
-                  btn.disabled = false;
-              }
-          }
-          function openSourcesModal() {
-              const modal = document.getElementById('sources-modal');
-              const textarea = document.getElementById('sources-textarea');
-              if (!modal || !textarea) return;
-              textarea.value = currentSourcesUrls.join('\\n');
-              modal.style.display = 'flex';
-          }
-          function closeSourcesModal() {
-              const modal = document.getElementById('sources-modal');
-              if (modal) modal.style.display = 'none';
-          }
-          async function saveSources() {
-              const textarea = document.getElementById('sources-textarea');
-              if (!textarea) return;
-              const sources = textarea.value.split('\\n').map(s => s.trim()).filter(s => s);
-              try {
-                  const response = await fetch('/set-sources', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ sources })
-                  });
-                  const data = await response.json();
-                  if (data.success) {
-                      showMessage('来源设置成功');
-                      closeSourcesModal();
-                      await refreshData();
-                  } else {
-                      showMessage('设置失败: ' + (data.error || '未知错误'), 'error');
-                  }
-              } catch (error) {
-                  console.error('保存来源失败:', error);
-                  showMessage('设置失败: ' + error.message, 'error');
-              }
-          }
-          function openBlacklistModal() {
-              const modal = document.getElementById('blacklist-modal');
-              const textarea = document.getElementById('blacklist-textarea');
-              if (!modal || !textarea) return;
-              textarea.value = currentBlacklist.join('\\n');
-              modal.style.display = 'flex';
-          }
-          function closeBlacklistModal() {
-              const modal = document.getElementById('blacklist-modal');
-              if (modal) modal.style.display = 'none';
-          }
-          async function saveBlacklist() {
-              const textarea = document.getElementById('blacklist-textarea');
-              if (!textarea) return;
-              const blacklist = textarea.value.split('\\n').map(s => s.trim()).filter(s => s);
-              try {
-                  const response = await fetch('/set-blacklist', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ blacklist })
-                  });
-                  const data = await response.json();
-                  if (data.success) {
-                      showMessage('黑名单设置成功');
-                      closeBlacklistModal();
-                      await refreshData();
-                  } else {
-                      showMessage('设置失败: ' + (data.error || '未知错误'), 'error');
-                  }
-              } catch (error) {
-                  console.error('保存黑名单失败:', error);
-                  showMessage('设置失败: ' + error.message, 'error');
-              }
-          }
-          async function refreshData() {
-              try {
-                  const response = await fetch('/raw');
-                  const data = await response.json();
-                  // 更新状态面板
-                  const recentCountEl = document.getElementById('recent-count');
-                  const totalCountEl = document.getElementById('total-count');
-                  const lastTimeEl = document.getElementById('last-time');
-                  if (recentCountEl) recentCountEl.textContent = data.originalCount || 0;
-                  if (totalCountEl) totalCountEl.textContent = (data.totalUniqueIPs || 0).toLocaleString();
-                  if (lastTimeEl) lastTimeEl.textContent = data.lastUpdated ? new Date(data.lastUpdated).toLocaleTimeString() : '从未更新';
-                  // 更新IP列表
-                  const ipList = document.getElementById('ip-list');
-                  const displayIPs = data.ips || [];
-                  if (ipList) {
-                      if (displayIPs.length > 0) {
-                          ipList.innerHTML = displayIPs.map(function(item) {
-                              // 确保 address 存在
-                              const address = item?.address || 'unknown';
-                              const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-                              const location = item?.location || '未知';
-                              const latency = item?.latency;
-                              // 添加类型角标
-                              const parsed = parseAddressWithPort(address);
-                              let typeBadge = '';
-                              if (parsed.type === 'ipv6') {
-                                typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
-                              } else if (parsed.type === 'ipv4') {
-                                typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
-                              } else if (parsed.type === 'domain') {
-                                typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
-                              }
-                              // 格式化显示地址 - 只在端口不是443时显示端口
-                              let displayAddress = parsed.address;
-                              if (parsed.port !== "443") {
-                                if (parsed.type === 'ipv6') {
-                                  displayAddress = '[' + displayAddress + ']:' + parsed.port;
-                                } else {
-                                  displayAddress = displayAddress + ':' + parsed.port;
-                                }
-                              } else {
-                                if (parsed.type === 'ipv6' && !address.startsWith('[')) {
-                                  displayAddress = '[' + displayAddress + ']';
-                                }
-                              }
-                              return '<div class="ip-item" data-ip="' + address + '">\
-                                  <div class="ip-info">\
-                                      <span class="ip-address">' + displayAddress + '#' + location + (latency ? '_' + Math.round(latency) + 'ms' : '') + typeBadge + '</span>\
-                                      <span class="speed-result" id="speed-' + safeId + '">' + (latency ? Math.round(latency) + 'ms' : '-') + '</span>\
-                                  </div>\
-                                  <div class="action-buttons">\
-                                      <button class="small-btn" onclick="testSingleIP(\\\'' + address.replace(/'/g, "\\\\'") + '\\\')" id="test-' + safeId + '">测速</button>\
-                                      <button class="small-btn" onclick="copyIP(\\\'' + displayAddress.replace(/'/g, "\\\\'") + '\\\', \\\'' + location.replace(/'/g, "\\\\'") + '\\\', ' + (latency || 'null') + ')">复制</button>\
-                                  </div>\
-                              </div>';
-                          }).join('');
-                          // 更新速度结果缓存 + 自动按延迟排序（修复核心）
-                          speedResults = {}; // 重置
-                          displayIPs.forEach(function(item) {
-                              const address = item?.address;
-                              const latency = item?.latency;
-                              if (address) {
-                                  if (latency) {
-                                      speedResults[address] = { latency: latency, success: true };
-                                      const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
-                                      const el = document.getElementById('speed-' + safeId);
-                                      if (el) {
-                                          const cls = latency < 200 ? 'speed-fast' : latency < 500 ? 'speed-medium' : 'speed-slow';
-                                          el.className = 'speed-result ' + cls;
-                                          el.textContent = Math.round(latency) + 'ms';
-                                      }
-                                  } else {
-                                      speedResults[address] = { latency: Infinity, success: false };
-                                  }
-                              }
-                          });
-
-                          // 关键：刷新页面或更新后自动按延迟从小到大排序
-                          sortBySpeed();
-                      } else {
-                          ipList.innerHTML = '<p style="text-align: center; color: #64748b; padding: 40px;">暂无 IP/域名 地址数据，请点击更新按钮获取</p>';
-                      }
-                  }
-                  // 更新来源
-                  currentSourcesUrls = data.sources_urls || [];
-                  const sources = document.getElementById('sources');
-                  if (sources) {
-                      const sourcesDisplay = [];
-                      const sourceMap = new Map();
-                      if (data.sources && data.sources.length > 0) {
-                          data.sources.forEach(s => sourceMap.set(s.name, s));
-                      }
-                      currentSourcesUrls.forEach(url => {
-    let hostname = url;
-    try {
-        hostname = new URL(url).hostname;
-    } catch (e) {}
-    const existing = sourceMap.get(url);
-    if (existing) {
-        sourcesDisplay.push({ ...existing, name: hostname });
-    } else {
-        sourcesDisplay.push({ name: hostname, status: "pending", count: 0, message: "新增站点" });
-    }
-});
-                      if (sourcesDisplay.length > 0) {
-                          sources.innerHTML = sourcesDisplay.map(function(s) {
-                              const cls = s.status === 'success' ? '' : 'error';
-                              const text = s.status === 'success' ? '成功获取 ' + s.count + ' 个地址' :
-                                           s.status === 'pending' ? s.message :
-                                           '失败: ' + (s.error || '未知');
-                              return '<div class="source ' + cls + '">\
-                                  <strong>' + s.name + '</strong>: ' + text + '\
-                              </div>';
-                          }).join('');
-                      } else {
-                          sources.innerHTML = '<p style="color: #64748b;">暂无数据来源信息</p>';
-                      }
-                  }
-                  // 更新黑名单
-                  currentBlacklist = data.blacklist || [];
-                  // 更新IP数量限制输入
-                  const input = document.getElementById('ip-limit-input');
-                  if (input) {
-                      if (data.limit) {
-                          input.value = data.limit;
-                          input.disabled = true;
-                          input.style.color = '#a0a0a0';
-                          input.style.backgroundColor = '#f0f0f0';
-                      } else {
-                          input.value = '';
-                          input.disabled = false;
-                          input.style.color = '';
-                          input.style.backgroundColor = '';
-                      }
-                  }
-              } catch (e) { 
-                  console.error('刷新数据失败:', e);
-                  showMessage('刷新数据失败: ' + e.message, 'error');
-              }
-          }
-          document.addEventListener('DOMContentLoaded', function() {
-              // 添加全局错误处理
-              window.onerror = function(message, source, lineno, colno, error) {
-                  console.error('全局错误:', message, error);
-                  return true; // 阻止默认处理
-              };
-              // 防止未捕获的Promise拒绝
-              window.onunhandledrejection = function(event) {
-                  console.error('��捕获的Promise拒绝:', event.reason);
-                  event.preventDefault();
-              };
-              refreshData();
           });
-      </script>
-  </body>
-  </html>`;
-    const headers = {
-      "Content-Type": "text/html;charset=utf-8",
-      "Access-Control-Allow-Origin": "*"
-    };
-    // 自动gzip如果支持
-    const acceptEncoding = request.headers.get('Accept-Encoding');
-    if (acceptEncoding && acceptEncoding.includes('gzip')) {
-      headers['Content-Encoding'] = 'gzip';
-      // 注意：在实际Worker中，需要压缩html字符串，这里简化假设浏览器处理
-    }
-    return new Response(html, { headers });
-  }
-  /* ====================== /ip.txt 和 /ips ====================== */
-  async function handleGetIPs(env, attachment = false) {
-    const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
-    const data = await getIPsWithFallback(env, limit);
-    if (!data.ips || data.ips.length === 0) {
-      return new Response("", {
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8",
-          "Access-Control-Allow-Origin": "*"
         }
-      });
-    }
-    const txt = data.ips
-      // 按延迟升序排序，没有延迟的排到最后
+      } catch (e) {
+        console.warn(`Skip bad history ${key.name}:`, e);
+      }
+    });
+    // 小延迟避免CPU峰值
+    if (i + BATCH_SIZE < allKeys.length) await new Promise(r => setTimeout(r, 10));
+  }
+  return allIPs.size;
+}
+async function getIPsWithFallback(env, limit = null) {
+const blacklistRaw = await getBlacklist(env);
+const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
+
+// 获取最近10条历史记录（足够补足）
+const historicalData = await getRecentHistoryData(env, 60);
+if (historicalData.length === 0) {
+  return {
+    ips: [],
+    count: 0,
+    lastUpdated: new Date().toISOString(),
+    sources: [],
+    originalCount: 0,
+    blacklist: blacklistRaw
+  };
+}
+
+const latest = historicalData[0]; // 最新一批
+const result = [];
+const addressSet = new Set();
+
+// Step 1: 处理最新批次
+let latestIPs = (latest.ips || [])
+  .filter(item => item && item.address && !isBlacklisted(item.address, blacklistPreprocessed));
+
+// 按延迟升序排序（无延迟排后面）
+latestIPs.sort((a, b) => {
+  if (a.latency && b.latency) return a.latency - b.latency;
+  if (a.latency) return -1;
+  if (b.latency) return 1;
+  return 0;
+});
+
+const latestCount = latestIPs.length;
+
+// 如果 limit 为 null 或 <= 0，视为“显示最新全部”
+if (!limit || limit <= 0) {
+  latestIPs.forEach(item => {
+    addressSet.add(item.address);
+    result.push(item);
+  });
+} else if (limit <= latestCount) {
+  // 只需要最新批次的前 limit 条
+  latestIPs.slice(0, limit).forEach(item => {
+    addressSet.add(item.address);
+    result.push(item);
+  });
+} else {
+  // 需要补足：先加全部最新批次
+  latestIPs.forEach(item => {
+    addressSet.add(item.address);
+    result.push(item);
+  });
+}
+
+// Step 2: 如果还需要补足（limit > latestCount 且 limit > 0）
+if (limit > 0 && result.length < limit) {
+  const need = limit - result.length;
+
+  for (let i = 1; i < historicalData.length && result.length < limit; i++) {
+    const batch = historicalData[i];
+    if (!batch.ips || !Array.isArray(batch.ips)) continue;
+
+    let candidates = batch.ips
+      .filter(item => item && item.address && !addressSet.has(item.address) && !isBlacklisted(item.address, blacklistPreprocessed))
       .sort((a, b) => {
         if (a.latency && b.latency) return a.latency - b.latency;
         if (a.latency) return -1;
         if (b.latency) return 1;
         return 0;
-      })
-      .map(i => formatAddressOutput(i.address, i.location, i.latency))
-      .join('\n');
-    const headers = {
-      "Content-Type": "text/plain;charset=utf-8",
-      "Access-Control-Allow-Origin": "*"
-    };
-    if (attachment) {
-      headers["Content-Disposition"] = "attachment; filename=cloudflare_ips.txt";
+      });
+
+    for (const item of candidates) {
+      if (result.length >= limit) break;
+      addressSet.add(item.address);
+      result.push(item);
     }
-    return new Response(txt + '\n', { headers });
   }
-  /* ====================== 其余接口适配 ====================== */
-  async function handleRawIPs(env) {
-    const latest = await getStoredIPsLatest(env);
-    const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
-    const display = await getIPsWithFallback(env, limit);
-    const result = {
-      ...latest,
-      limit,
-      sources_urls: await getSources(env),
-      blacklist: display.blacklist,
-      totalUniqueIPs: await getAllUniqueIPCount(env),
-      ips: display.ips.sort((a, b) => {
-        if (a.latency && b.latency) return a.latency - b.latency;
-        if (a.latency) return -1;
-        if (b.latency) return 1;
-        return 0;
-      }),
-      count: display.count,
-      originalCount: display.originalCount || 0,
-    };
-    return jsonResponse(result);
-  }
-  async function handleItdogData(env) {
-    // ITDog只支持IPv4，所以需要过滤
-    const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
-    const data = await getIPsWithFallback(env, limit);
-    const ipv4Only = data.ips?.filter(item => {
-      const parsed = parseAddressWithPort(item.address);
-      return parsed.type === 'ipv4';
-    }) || [];
-    return jsonResponse({ ips: ipv4Only.map(i => i.address) || [], count: ipv4Only.length });
-  }
-  async function handleSpeedTest(req, env) {
-    const url = new URL(req.url);
-    const address = url.searchParams.get("ip");
-    if (!address) return jsonResponse({ error: "missing ip" }, 400);
-    const decodedAddress = decodeURIComponent(address);
-    const r = await testIPLatency(decodedAddress);
-    // 获取位置信息
-    let location = "未知";
-    const parsed = parseAddressWithPort(decodedAddress);
-    if (parsed.type === 'ipv6') {
-      // 使用 ipinfo.io 获取 IPv6 地理位置
-      try {
-        const response = await fetch(`https://ipinfo.io/${parsed.address}/json`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.country) {
-            location = data.country;
+}
+
+return {
+  ips: result,
+  count: result.length,
+  lastUpdated: latest.lastUpdated || new Date().toISOString(),
+  sources: latest.sources || [],
+  originalCount: latestCount,        // 最新批次原始数量（用于前台显示）
+  blacklist: blacklistRaw
+};
+}
+/* ====================== 页面与接口 ====================== */
+async function serveHTML(env, request) {
+  const latest = await getStoredIPsLatest(env);
+  const totalUnique = await getAllUniqueIPCount(env);
+  const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
+  const displayData = await getIPsWithFallback(env, limit);
+  // 确保显示数据中的每个IP都有位置信息
+  displayData.ips.forEach(ip => {
+    if (!ip.location) ip.location = "未知";
+  });
+  const data = {
+    ...latest,
+    limit,
+    sources_urls: await getSources(env),
+    blacklist: displayData.blacklist,
+    totalUniqueIPs: totalUnique,
+    ips: displayData.ips,
+    count: displayData.count,
+    originalCount: displayData.originalCount || 0,
+  };
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌐 Cloudflare 优质 IP/域名 收集器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; background: #f8fafc; color: #334155; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; }
+        .header-content h1 { font-size: 2.5rem; background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; font-weight: 700; }
+        .header-content p { color: #64748b; font-size: 1.1rem; }
+        .social-links { display: flex; gap: 15px; }
+        .social-link { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: white; border: 1px solid #e2e8f0; transition: all 0.3s ease; text-decoration: none; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .social-link:hover { background: #f8fafc; transform: translateY(-2px); border-color: #cbd5e1; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .social-link.youtube { color: #dc2626; }
+        .social-link.youtube:hover { background: #fef2f2; border-color: #fecaca; }
+        .social-link.github { color: #1f2937; }
+        .social-link.telegram { color: #3b82f6; }
+        .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
+        .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat { background: #f8fafc; padding: 20px; border-radius: 12px; text-align: center; border: 1px solid #e2e8f0; }
+        .stat-value { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+        .stat-value.recent { color: #3b82f6; }
+        .stat-value.total { color: #10b981; }
+        .stat-value.time { color: #6b7280; }
+        .button-group { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+        .button { padding: 12px 20px; border: none; border-radius: 10px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: all 0.3s ease; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; background: #3b82f6; color: white; border: 1px solid #3b82f6; }
+        .button:hover { background: #2563eb; border-color: #2563eb; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(59,130,246,0.3); }
+        .button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+        .button-success { background: #10b981; border-color: #10b981; }
+        .button-success:hover { background: #059669; border-color: #059669; box-shadow: 0 4px 8px rgba(16,185,129,0.3); }
+        .button-warning { background: #f59e0b; border-color: #f59e0b; }
+        .button-warning:hover { background: #d97706; border-color: #d97706; box-shadow: 0 4px 8px rgba(245,158,11,0.3); }
+        .button-secondary { background: white; color: #475569; border-color: #cbd5e1; }
+        .button-secondary:hover { background: #f8fafc; border-color: #94a3b8; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .ip-list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
+        .sources-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
+        .ip-list { background: #f8fafc; border-radius: 12px; padding: 20px; max-height: 500px; overflow-y: auto; border: 1px solid #e2e8f0; }
+        .ip-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; transition: background 0.3s ease; }
+        .ip-item:hover { background: #f1f5f9; }
+        .ip-item:last-child { border-bottom: none; }
+        .ip-info { display: flex; align-items: center; gap: 16px; }
+        .ip-address { font-family: 'SF Mono', 'Courier New', monospace; font-weight: 600; min-width: 140px; color: #1e293b; word-break: break-all; }
+        .speed-result { font-size: 0.85rem; padding: 4px 12px; border-radius: 8px; background: #e2e8f0; min-width: 70px; text-align: center; font-weight: 600; }
+        .speed-fast { background: #d1fae5; color: #065f46; }
+        .speed-medium { background: #fef3c7; color: #92400e; }
+        .speed-slow { background: #fee2e2; color: #991b1b; }
+        .action-buttons { display: flex; gap: 8px; }
+        .small-btn { padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; border: 1px solid #cbd5e1; background: white; color: #475569; cursor: pointer; transition: all 0.3s ease; }
+        .small-btn:hover { background: #f8fafc; border-color: #94a3b8; }
+        .small-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .loading { display: none; text-align: center; padding: 30px; }
+        .spinner { border: 3px solid #e2e8f0; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .result { margin: 20px 0; padding: 16px 20px; border-radius: 12px; display: none; border-left: 4px solid; }
+        .success { background: #d1fae5; color: #065f46; border-left-color: #10b981; }
+        .error { background: #fee2e2; color: #991b1b; border-left-color: #ef4444; }
+        .speed-test-progress { margin: 16px 0; background: #e2e8f0; border-radius: 8px; height: 8px; overflow: hidden; display: none; }
+        .speed-test-progress-bar { background: linear-gradient(90deg, #3b82f6, #06b6d4); height: 100%; width: 0%; transition: width 0.3s ease; }
+        .sources { display: grid; gap: 12px; }
+        .source { padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #10b981; }
+        .source.error { border-left-color: #ef4444; }
+        .footer { text-align: center; margin-top: 40px; padding-top: 30px; border-top: 1px solid #e2e8f0; color: #64748b; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 30px; border-radius: 16px; max-width: 500px; width: 90%; border: 1px solid #e2e8f0; box-shadow: 0 20px 25px rgba(0,0,0,0.1); }
+        .modal h3 { margin-bottom: 16px; color: #1e40af; }
+        .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
+        @media (max-width: 768px) {
+            .header { flex-direction: column; gap: 20px; text-align: center; }
+            .header-content h1 { font-size: 2rem; }
+            .button-group { flex-direction: column; }
+            .button { width: 100%; justify-content: center; }
+            .ip-item { flex-direction: column; align-items: flex-start; gap: 12px; }
+            .ip-info { width: 100%; justify-content: space-between; }
+            .action-buttons { width: 100%; justify-content: flex-end; }
+            .modal-buttons { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-content">
+                <h1>🌐 Cloudflare IP/域名 收集器</h1>
+                <p>网络加速专家 | 智能测速与优化</p>
+            </div>
+            <div class="social-links">
+                <a href="https://youtu.be/rZl2jz--Oes" target="_blank" title="好软推荐" class="social-link youtube">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.546 12 3.546 12 3.546s-7.505 0-9.377.504A3.016 3.016 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.504 9.376.504 9.376.504s7.505 0 9.377-.504a3.016 3.016 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12 9.545 15.568z"/>
+                    </svg>
+                </a>
+                <a href="https://github.com/ethgan/CF-Worker-BestIP-collector" target="_blank" title="GitHub" class="social-link github">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.085 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                    </svg>
+                </a>
+                <a href="https://t.me/yt_hytj" target="_blank" title="Telegram" class="social-link telegram">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="m7.06510669 16.9258959c5.22739451-2.1065178 8.71314291-3.4952633 10.45724521-4.1662364 4.9797665-1.9157646 6.0145193-2.2485535 6.6889567-2.2595423.1483363-.0024169.480005.0315855.6948461.192827.1814076.1361492.23132.3200675.2552048.4491519.0238847.1290844.0536269.4231419.0299841.65291-.2698553 2.6225356-1.4375148 8.986738-2.0315537 11.9240228-.2513602 1.2428753-.7499132 1.5088847-1.2290685 1.5496672-1.0413153.0886298-1.8284257-.4857912-2.8369905-1.0972863-1.5782048-.9568691-2.5327083-1.3984317-4.0646293-2.3321592-1.7703998-1.0790837-.212559-1.583655.7963867-2.5529189.2640459-.2536609 4.7753906-4.3097041 4.755976-4.431706-.0070494-.0442984-.1409018-.481649-.2457499-.5678447-.104848-.0861957-.2595946-.0567202-.3712641-.033278-.1582881.0332286-2.6794907 1.5745492-7.5636077 4.6239616-.715635.4545193-1.3638349.6759763-1.9445998.6643712-.64024672-.0127938-1.87182452-.334829-2.78737602-.6100966-1.11296117-.3376271-1.53748501-.4966332-1.45976769-1.0700283.04048-.2986597.32581586-.610598.8560076-.935815z"/>
+                    </svg>
+                </a>
+            </div>
+        </div>
+        <div class="card">
+            <h2>📊 系统状态</h2>
+            <div class="stats">
+                <div class="stat"><div class="stat-value recent" id="recent-count">${data.originalCount || 0}</div><div>最近更新数量</div></div>
+                <div class="stat"><div class="stat-value total" id="total-count">${data.totalUniqueIPs.toLocaleString()}</div><div>全部数量</div></div>
+                <div class="stat"><div class="stat-value time" id="last-time">${data.lastUpdated ? new Date(data.lastUpdated).toLocaleTimeString() : '从未更新'}</div><div>更新时间</div></div>
+            </div>
+            <div class="button-group">
+                <button class="button" onclick="updateIPs()" id="update-btn">🔄 立即更新</button>
+                <a href="/ips" class="button button-success" download="cloudflare_ips.txt">📥 下载列表</a>
+                <a href="/ip.txt" class="button button-secondary" target="_blank">🔗 查看文本</a>
+                <button class="button button-warning" onclick="startSpeedTest()" id="speedtest-btn">⚡ 开始测速</button>
+                <button class="button" onclick="openItdogModal()">🌐 ITDog 测速</button>
+                <button class="button button-secondary" onclick="refreshData()">🔄 刷新状态</button>
+                <input type="number" id="ip-limit-input" min="1" placeholder="IP数量" style="padding: 12px; border-radius: 10px; border: 1px solid #cbd5e1; width: 120px; font-size: 0.95rem;" value="${data.limit || ''}">
+                <button class="button" onclick="setIpLimit()" id="set-limit-btn">⚙️ 设置数量</button>
+            </div>
+            <div class="loading" id="loading"><div class="spinner"></div><p>正在从多个来源收集 IP/域名 地址，请稍候...</p></div>
+            <div class="result" id="result"></div>
+        </div>
+        <div class="card">
+            <div class="ip-list-header">
+                <h2>📋 IP/域名 地址列表</h2>
+                <div>
+                    <button class="small-btn" onclick="copyAllIPs()">📋 复制全部</button>
+                    <button class="small-btn" onclick="sortBySpeed()" id="sort-btn">🔽 按速度排序</button>
+                </div>
+            </div>
+            <div class="speed-test-progress" id="speed-test-progress">
+                <div class="speed-test-progress-bar" id="speed-test-progress-bar"></div>
+            </div>
+            <div style="text-align: center; margin: 8px 0; font-size: 0.9rem; color: #64748b;" id="speed-test-status">准备测速...</div>
+            <div class="ip-list" id="ip-list">
+                ${data.ips && data.ips.length > 0 ? data.ips.map(item => {
+                  // 确保 address 存在，使用安全默认值
+                  const address = item?.address || 'unknown';
+                  // 优化：用 btoa 作为 safeId，避免特殊字符
+                  const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+                  let typeBadge = '';
+                  // 添加类型角标
+                  const parsed = parseAddressWithPort(address);
+                  if (parsed.type === 'ipv6') {
+                    typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
+                  } else if (parsed.type === 'ipv4') {
+                    typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
+                  } else if (parsed.type === 'domain') {
+                    typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
+                  }
+                  // 格式化显示地址 - 只在端口不是443时显示端口
+                  let displayAddress = parsed.address;
+                  if (parsed.port !== "443") {
+                    if (parsed.type === 'ipv6') {
+                      displayAddress = `[${displayAddress}]:${parsed.port}`;
+                    } else {
+                      displayAddress = `${displayAddress}:${parsed.port}`;
+                    }
+                  } else {
+                    if (parsed.type === 'ipv6' && !address.startsWith('[')) {
+                      displayAddress = `[${displayAddress}]`;
+                    }
+                  }
+                  return `
+                    <div class="ip-item" data-ip="${address}">
+                        <div class="ip-info">
+                            <span class="ip-address">${displayAddress}#${item?.location || '未知'}${typeBadge}</span>
+                            <span class="speed-result" id="speed-${safeId}">${item?.latency ? Math.round(item.latency) + 'ms' : '-'}</span>
+                        </div>
+                        <div class="action-buttons">
+                            <button class="small-btn" onclick="testSingleIP('${address.replace(/'/g, "\\'")}')" id="test-${safeId}">测速</button>
+                            <button class="small-btn" onclick="copyIP('${displayAddress.replace(/'/g, "\\'")}', '${(item?.location || '未知').replace(/'/g, "\\'")}', ${item?.latency || 'null'})">复制</button>
+                        </div>
+                    </div>
+                  `;
+                }).join('') : '<p style="text-align: center; color: #64748b; padding: 40px;">暂无 IP/域名 地址数据，请点击更新按钮获取</p>'}
+            </div>
+        </div>
+          <div class="card">
+              <div class="sources-header">
+                  <h2>🌍 数据来源状态</h2>
+                  <button class="button" onclick="openSourcesModal()">⚙️ 设置来源</button>
+                  <button class="button" onclick="openBlacklistModal()">◼️ 黑名单</button>
+              </div>
+              <div class="sources" id="sources">
+                  ${data.sources ? data.sources.map(source => {
+    let displayName = source.name;
+    try {
+      displayName = new URL(source.name).hostname;
+    } catch (_) {}
+    return `
+      <div class="source ${source.status === 'success' ? '' : 'error'}">
+          <strong>${displayName}</strong>: 
+          ${source.status === 'success' ? '成功获取 ' + source.count + ' 个地址' : '失败: ' + source.error}
+      </div>
+    `;
+  }).join('') : '<p style="color: #64748b;">暂无数据来源信息</p>'}
+              </div>
+          </div>
+        <div class="footer">
+            <p>Cloudflare IP/域名 Collector © ${new Date().getFullYear()} | 增强版：完美支持 IPv6 和域名</p>
+        </div>
+    </div>
+    <div class="modal" id="itdog-modal">
+        <div class="modal-content">
+            <h3>🌐 ITDog 批量 TCPing 测速</h3>
+            <p>ITDog.cn 提供了从多个国内监测点进行 TCPing 测速的功能，可以更准确地测试 IP 在国内的连通性。</p>
+            <p><strong>使用方法：</strong></p>
+            <ol style="margin-left: 20px; margin-bottom: 16px;">
+                <li>点击下方按钮复制所有 IPv4 地址</li>
+                <li>打开 ITDog 批量 TCPing 页面</li>
+                <li>将复制的 IP 粘贴到输入框中</li>
+                <li>点击开始测试按钮</li>
+            </ol>
+            <p><strong>注意：</strong> ITDog 免费版可能有 IP 数量限制，如果 IP 过多请分批测试。</p>
+            <div class="modal-buttons">
+                <button class="button button-secondary" onclick="closeItdogModal()">取消</button>
+                <button class="button" onclick="copyIPsForItdog()">复制 IPv4 列表</button>
+                <a href="https://www.itdog.cn/batch_tcping/" class="button button-success" target="_blank">打开 ITDog</a>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="sources-modal">
+        <div class="modal-content">
+            <h3>⚙️ 设置数据来源</h3>
+            <p>编辑来源 URL，每行一个。保存后将使用这些来源更新 IP/域名。</p>
+            <textarea id="sources-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${(data.sources_urls || []).join('\\n')}</textarea>
+            <div class="modal-buttons">
+                <button class="button button-secondary" onclick="closeSourcesModal()">取消</button>
+                <button class="button button-success" onclick="saveSources()">保存</button>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="blacklist-modal">
+        <div class="modal-content">
+            <h3>◼️ 黑名单管理</h3>
+            <p>输入需要排除的 IPv4/IPv6/域名 地址，每行一个。保存后将在所有页面中过滤这些地址。</p>
+            <p><strong>增强功能：</strong> 用双引号包围域名（如 "example.com"）将过滤所有该域名的子域名（如 sub.example.com）。</p>
+            <textarea id="blacklist-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${data.blacklist.join('\\n')}</textarea>
+            <div class="modal-buttons">
+                <button class="button button-secondary" onclick="closeBlacklistModal()">取消</button>
+                <button class="button button-success" onclick="saveBlacklist()">保存</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        // 解析地址类型
+        function parseAddressWithPort(address) {
+          let addrPart, portPart = "443";
+          // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
+          if (address.startsWith('[') && address.includes(']:')) {
+            const ipv6End = address.indexOf(']');
+            addrPart = address.substring(1, ipv6End);
+            portPart = address.substring(ipv6End + 2) || "443";
+            return { address: addrPart, port: portPart, type: 'ipv6' };
+          }
+          // 处理常规地址
+          const parts = address.split(':');
+          // IPv6 地址没有端口 (没有方括号)
+          if (parts.length > 2 && !address.includes('[')) {
+            return { address: address, port: "443", type: 'ipv6' };
+          }
+          // IPv4 或域名
+          if (parts.length === 1) {
+            addrPart = parts[0];
+            // 检查是否为 IPv4
+            const octets = addrPart.split('.');
+            if (octets.length === 4) {
+              const isValid = octets.every(oct => {
+                const num = parseInt(oct, 10);
+                return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
+              });
+              if (isValid) {
+                return { address: addrPart, port: "443", type: 'ipv4' };
+              }
+            }
+            // 检查是否为 IPv6
+            if (/^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$/.test(addrPart)) {
+              return { address: addrPart, port: "443", type: 'ipv6' };
+            }
+            // 否则假设为域名
+            return { address: addrPart, port: "443", type: 'domain' };
+          }
+          // 域名:port 或 IPv4:port
+          if (parts.length === 2) {
+            addrPart = parts[0];
+            portPart = parts[1];
+            // 检查是否为 IPv4
+            const octets = addrPart.split('.');
+            if (octets.length === 4) {
+              const isValid = octets.every(oct => {
+                const num = parseInt(oct, 10);
+                return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
+              });
+              if (isValid) {
+                return { address: addrPart, port: portPart, type: 'ipv4' };
+              }
+            }
+            // 检查是否为 IPv6
+            if (/^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$/.test(addrPart)) {
+              return { address: addrPart, port: portPart, type: 'ipv6' };
+            }
+            // 否则假设为域名
+            return { address: addrPart, port: portPart, type: 'domain' };
+          }
+          return { address: address, port: "443", type: 'unknown' };
+        }
+        // 格式化地址输出
+        function formatAddressOutput(address, location, latency) {
+          const parsed = parseAddressWithPort(address);
+          const portPart = parsed.port !== "443" ? ':' + parsed.port : "";
+          const latencyPart = latency ? Math.round(latency) + 'ms' : "";
+          if (parsed.type === 'ipv6') {
+            return '[' + parsed.address + ']' + portPart + '#' + location + (latencyPart ? '_' + latencyPart : '');
+          } else if (parsed.type === 'domain') {
+            return parsed.address + portPart + '#' + parsed.address + (latencyPart ? '_' + latencyPart : '');
+          } else {
+            // IPv4
+            return parsed.address + portPart + '#' + location + (latencyPart ? '_' + latencyPart : '');
           }
         }
-      } catch (e) {
-        console.error("Failed to get location for IPv6", parsed.address, e);
-      }
-    } else if (parsed.type === 'ipv4') {
-      // 使用 ip-api.com 获取 IPv4 地理位置
-      try {
-        const response = await fetch(`http://ip-api.com/json/${parsed.address}?fields=countryCode`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.countryCode) {
-            location = data.countryCode;
-          }
+        let speedResults = {};
+        let isTesting = false;
+        let currentTestIndex = 0;
+        let currentSourcesUrls = ${JSON.stringify(data.sources_urls || []).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')};
+        let currentBlacklist = ${JSON.stringify(data.blacklist || []).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')};
+        function showMessage(message, type) {
+            if (type === undefined) type = 'success';
+            const result = document.getElementById('result');
+            result.className = 'result ' + type;
+            result.innerHTML = '<p>' + message + '</p>';
+            result.style.display = 'block';
+            setTimeout(function() {
+                result.style.display = 'none';
+            }, 3000);
         }
-      } catch (e) {
-        console.error("Failed to get location for IPv4", parsed.address, e);
+        function openItdogModal() { document.getElementById('itdog-modal').style.display = 'flex'; }
+        function closeItdogModal() { document.getElementById('itdog-modal').style.display = 'none'; }
+        async function copyIPsForItdog() {
+            try {
+                const response = await fetch('/itdog-data');
+                const data = await response.json();
+                if (data.ips && data.ips.length > 0) {
+                    const ipText = data.ips.join('\\n');
+                    await navigator.clipboard.writeText(ipText);
+                    showMessage('已复制 IPv4 列表，请粘贴到 ITDog 网站');
+                    closeItdogModal();
+                } else {
+                    showMessage('没有可测速的IP地址', 'error');
+                }
+            } catch (error) {
+                showMessage('获取 IP 列表失败', 'error');
+            }
+        }
+        function copyIP(address, location, latency) {
+            let text = formatAddressOutput(address, location, latency);
+            navigator.clipboard.writeText(text).then(function() {
+                showMessage('已复制 地址: ' + text);
+            }).catch(function(err) {
+                console.error('复制失败:', err);
+            });
+        }
+        function copyAllIPs() {
+            const ipItems = document.querySelectorAll('.ip-item');
+            if (!ipItems.length) return showMessage('没有可复制的地址', 'error');
+            const texts = Array.from(ipItems).map(function(item) {
+                const address = item.dataset.ip;
+                const location = item.querySelector('.ip-address').textContent.split('#')[1].split('_')[0];
+                const latencyStr = item.querySelector('.speed-result').textContent;
+                const latency = latencyStr.includes('ms') ? parseInt(latencyStr) : null;
+                return formatAddressOutput(address, location, latency);
+            });
+            const allText = texts.join('\\n');
+            navigator.clipboard.writeText(allText).then(function() {
+                showMessage('已复制 ' + ipItems.length + ' 个地址');
+            }).catch(function(err) {
+                console.error('复制全部失败:', err);
+            });
+        }
+        async function testSingleIP(address) {
+            const item = document.querySelector('[data-ip="' + address + '"]');
+            if (!item) return showMessage('未找到地址元素', 'error');
+            const testBtn = item.querySelector('.small-btn[id^="test-"]');
+            const speedElement = item.querySelector('.speed-result');
+            const addressElement = item.querySelector('.ip-address');
+            if (!addressElement) return;
+
+            // 关键：从当前文本里提取类型角标（纯文本版）
+            let typeBadgeText = '';
+            if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
+            else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
+            else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
+
+            // 根据类型生成完整的带样式的角标 HTML
+            let typeBadge = '';
+            if (typeBadgeText === 'IPv6') {
+                typeBadge = '<span style="background:#10b981;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv6</span>';
+            } else if (typeBadgeText === 'IPv4') {
+                typeBadge = '<span style="background:#3b82f6;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv4</span>';
+            } else if (typeBadgeText === '域名') {
+                typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
+            };
+            if (!testBtn || !speedElement || !addressElement) return showMessage('元素缺失，无法测速', 'error');
+            testBtn.disabled = true;
+            testBtn.textContent = '测试中...';
+            speedElement.textContent = '测试中...';
+            speedElement.className = 'speed-result';
+            try {
+                const startTime = performance.now();
+                const response = await fetch('/speedtest?ip=' + encodeURIComponent(address));
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                const latency = performance.now() - startTime;
+                speedResults[address] = { latency: latency, success: data.success };
+                if (data.success) {
+                    const rounded = Math.round(latency);
+                    const speedClass = rounded < 200 ? 'speed-fast' : rounded < 500 ? 'speed-medium' : 'speed-slow';
+                    speedElement.textContent = rounded + 'ms';
+                    speedElement.className = 'speed-result ' + speedClass;
+                    // 安全地更新地址元素文本
+                    const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
+                    addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
+                    showMessage('地址 ' + address + ' 测速完成: ' + rounded + 'ms');
+                } else {
+                    speedElement.textContent = '失败';
+                    speedElement.className = 'speed-result speed-slow';
+                }
+            } catch (error) {
+                console.error('测速错误:', error);
+                speedElement.textContent = '错误';
+                speedElement.className = 'speed-result speed-slow';
+                showMessage('地址 ' + address + ' 测速错误: ' + error.message, 'error');
+            } finally {
+                testBtn.disabled = false;
+                testBtn.textContent = '测速';
+                // 强制重绘
+                void speedElement.offsetHeight;
+            }
+        }
+        async function startSpeedTest() {
+            if (isTesting) return showMessage('测速正在进行中，请稍候...', 'error');
+            const ipItems = Array.from(document.querySelectorAll('.ip-item'));
+            if (ipItems.length === 0) return showMessage('没有可测速的地址', 'error');
+            const speedtestBtn = document.getElementById('speedtest-btn');
+            const progressBar = document.getElementById('speed-test-progress');
+            const progressBarInner = document.getElementById('speed-test-progress-bar');
+            const statusElement = document.getElementById('speed-test-status');
+            isTesting = true;
+            speedtestBtn.disabled = true;
+            speedtestBtn.textContent = '测速中...';
+            progressBar.style.display = 'block';
+            const totalIPs = ipItems.length;
+            currentTestIndex = 0;
+            // 重置所有速度结果显示
+            document.querySelectorAll('.speed-result').forEach(function(el) {
+                el.textContent = '测试中...';
+                el.className = 'speed-result';
+            });
+            // 禁用所有测速按钮
+            document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) { 
+                if (btn) btn.disabled = true; 
+            });
+            for (let i = 0; i < totalIPs; i++) {
+                if (!isTesting) break;
+                const ipItem = ipItems[i];
+                const address = ipItem.dataset.ip;
+                if (!address) continue;
+                statusElement.textContent = '正在测速 ' + (i+1) + '/' + totalIPs + ': ' + address;
+                const startTime = performance.now();
+                try {
+                    const response = await fetch('/speedtest?ip=' + encodeURIComponent(address));
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    const data = await response.json();
+                    const latency = performance.now() - startTime;
+                    const speedElement = ipItem.querySelector('.speed-result');
+                    const addressElement = ipItem.querySelector('.ip-address');		  
+                    if (!addressElement) return;
+
+                    // 关键：从当前文本里提取类型角标（纯文本版）
+                    let typeBadgeText = '';
+                    if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
+                    else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
+                    else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
+
+                    // 根据类型生成完整的带样式的角标 HTML
+                    let typeBadge = '';
+                    if (typeBadgeText === 'IPv6') {
+                        typeBadge = '<span style="background:#10b981;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv6</span>';
+                    } else if (typeBadgeText === 'IPv4') {
+                        typeBadge = '<span style="background:#3b82f6;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">IPv4</span>';
+                    } else if (typeBadgeText === '域名') {
+                        typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
+                    };
+                    if (data.success) {
+                        const rounded = Math.round(latency);
+                        const speedClass = rounded < 200 ? 'speed-fast' : rounded < 500 ? 'speed-medium' : 'speed-slow';
+                        if (speedElement) {
+                            speedElement.textContent = rounded + 'ms';
+                            speedElement.className = 'speed-result ' + speedClass;
+                        }
+                        if (addressElement) {
+                            const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
+                            addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
+                        }
+                        speedResults[address] = { latency: rounded, success: true };
+                    } else {
+                        if (speedElement) {
+                            speedElement.textContent = '失败';
+                            speedElement.className = 'speed-result speed-slow';
+                        }
+                    }
+                    // 强制重绘
+                    if (speedElement) void speedElement.offsetHeight;
+                } catch (error) {
+                    console.error('批量测速错误:', error);
+                    const speedElement = ipItem.querySelector('.speed-result');
+                    if (speedElement) {
+                        speedElement.textContent = '错误';
+                        speedElement.className = 'speed-result speed-slow';
+                    }
+                }
+                currentTestIndex = i + 1;
+                progressBarInner.style.width = (currentTestIndex / totalIPs) * 100 + '%';
+                // 添加延迟，避免对服务器造成过大压力
+                await new Promise(function(r) { setTimeout(r, 700 / Math.max(totalIPs, 4)); });
+            }
+            isTesting = false;
+            speedtestBtn.disabled = false;
+            speedtestBtn.textContent = '⚡ 开始测速';
+            progressBar.style.display = 'none';
+            // 重新启用所有测速按钮
+            document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) { 
+                if (btn) btn.disabled = false; 
+            });
+            sortBySpeed();
+            showMessage('测速完成，已测试 ' + currentTestIndex + ' 个地址，已按延迟排序');
+        }
+        function sortBySpeed() {
+            const ipList = document.getElementById('ip-list');
+            if (!ipList) return;
+            const ipItems = Array.from(ipList.querySelectorAll('.ip-item'));
+            ipItems.sort(function(a, b) {
+                const ra = speedResults[a.dataset.ip];
+                const rb = speedResults[b.dataset.ip];
+                if (ra && rb) return ra.latency - rb.latency;
+                if (ra) return -1;
+                if (rb) return 1;
+                return 0;
+            });
+            // 重新添加排序后的元素
+            ipItems.forEach(function(item) { 
+                if (item && ipList) ipList.appendChild(item); 
+            });
+        }
+        async function updateIPs() {
+            const btn = document.getElementById('update-btn');
+            const loading = document.getElementById('loading');
+            const result = document.getElementById('result');
+            if (!btn || !loading || !result) return;
+            btn.disabled = true;
+            loading.style.display = 'block';
+            result.style.display = 'none';
+            try {
+                const response = await fetch('/update', { method: 'POST' });
+                const data = await response.json();
+                if (data.success) {
+                    result.className = 'result success';
+                    result.innerHTML = '<h3>✅ 更新成功！</h3><p>耗时: ' + data.duration + '</p><p>本次唯一 地址: ' + data.totalIPs + '</p><p>新位置测试: ' + data.newLocationTested + '</p><p>新延迟测试: ' + data.newLatencyTested + '</p><p>历史键: ' + (data.historyKey || '—') + '</p><p>时间: ' + new Date(data.timestamp).toLocaleString() + '</p>';
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = '<h3>❌ 更新失败</h3><p>' + (data.error || '未知错误') + '</p>';
+                }
+                result.style.display = 'block';
+                setTimeout(refreshData, 1500);
+            } catch (error) {
+                console.error('更新失败:', error);
+                result.className = 'result error';
+                result.innerHTML = '<h3>❌ 请求失败</h3><p>' + error.message + '</p>';
+                result.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        }
+async function setIpLimit() {
+const input = document.getElementById('ip-limit-input');
+const btn = document.getElementById('set-limit-btn');
+
+// 第一下点击 → 进入编辑模式
+if (!input.disabled) {
+  const val = input.value.trim();
+  const num = val === '' ? 0 : parseInt(val);
+
+  if (isNaN(num) && val !== '') {
+    showMessage('请输入有效数字', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/set-limit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: num || null })
+    });
+    const data = await resp.json();
+    if (data.success) {
+      if (num === 0 || val === '') {
+        input.value = '';
+        input.placeholder = '无限制（显示最新全部）';
+      } else {
+        input.value = num;
       }
+      input.disabled = true;
+      input.style.color = '#a0a0a0';
+      input.style.backgroundColor = '#f0f0f0';
+      showMessage(data.message || '设置成功');
+      setTimeout(refreshData, 1200);
     } else {
-      // 域名
-      location = parsed.address;
+      showMessage('设置失败', 'error');
     }
-    return jsonResponse({ 
-      success: r.success, 
-      latency: r.latency, 
-      ip: decodedAddress,
-      location: location
-    });
+  } catch (e) {
+    showMessage('请求失败', 'error');
+  } finally {
+    btn.disabled = false;
   }
-  async function handleSaveLatency(req, env) { return jsonResponse({success:true}); }
-  async function handleSetIpLimit(req, env) {
-    const { limit } = await req.json();
-    if (limit === 0 || limit === null || limit === undefined || 
-        typeof limit !== 'number' || limit < 0 || !Number.isInteger(limit)) {
-      // 如果limit为0或无效，删除设置，使用默认
-      await env.IP_STORAGE.delete("ip_limit");
-      return jsonResponse({ success: true, message: "已重置为默认数量" });
-    }
-    await env.IP_STORAGE.put("ip_limit", limit.toString());
-    return jsonResponse({ success: true });
+  return;
+}
+
+// 已禁用状态 → 点击激活编辑
+input.disabled = false;
+input.style.color = '';
+input.style.backgroundColor = '';
+input.placeholder = 'IP数量';
+input.focus();
+}
+        function openSourcesModal() {
+            const modal = document.getElementById('sources-modal');
+            const textarea = document.getElementById('sources-textarea');
+            if (!modal || !textarea) return;
+            textarea.value = currentSourcesUrls.join('\\n');
+            modal.style.display = 'flex';
+        }
+        function closeSourcesModal() {
+            const modal = document.getElementById('sources-modal');
+            if (modal) modal.style.display = 'none';
+        }
+        async function saveSources() {
+            const textarea = document.getElementById('sources-textarea');
+            if (!textarea) return;
+            const sources = textarea.value.split('\\n').map(s => s.trim()).filter(s => s);
+            try {
+                const response = await fetch('/set-sources', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sources })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showMessage('来源设置成功');
+                    closeSourcesModal();
+                    await refreshData();
+                } else {
+                    showMessage('设置失败: ' + (data.error || '未知错误'), 'error');
+                }
+            } catch (error) {
+                console.error('保存来源失败:', error);
+                showMessage('设置失败: ' + error.message, 'error');
+            }
+        }
+        function openBlacklistModal() {
+            const modal = document.getElementById('blacklist-modal');
+            const textarea = document.getElementById('blacklist-textarea');
+            if (!modal || !textarea) return;
+            textarea.value = currentBlacklist.join('\\n');
+            modal.style.display = 'flex';
+        }
+        function closeBlacklistModal() {
+            const modal = document.getElementById('blacklist-modal');
+            if (modal) modal.style.display = 'none';
+        }
+        async function saveBlacklist() {
+            const textarea = document.getElementById('blacklist-textarea');
+            if (!textarea) return;
+            const blacklist = textarea.value.split('\\n').map(s => s.trim()).filter(s => s);
+            try {
+                const response = await fetch('/set-blacklist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ blacklist })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showMessage('黑名单设置成功');
+                    closeBlacklistModal();
+                    await refreshData();
+                } else {
+                    showMessage('设置失败: ' + (data.error || '未知错误'), 'error');
+                }
+            } catch (error) {
+                console.error('保存黑名单失败:', error);
+                showMessage('设置失败: ' + error.message, 'error');
+            }
+        }
+        async function refreshData() {
+            try {
+                const response = await fetch('/raw');
+                const data = await response.json();
+                // 更新状态面板
+                const recentCountEl = document.getElementById('recent-count');
+                const totalCountEl = document.getElementById('total-count');
+                const lastTimeEl = document.getElementById('last-time');
+                if (recentCountEl) recentCountEl.textContent = data.originalCount || 0;
+                if (totalCountEl) totalCountEl.textContent = (data.totalUniqueIPs || 0).toLocaleString();
+                if (lastTimeEl) lastTimeEl.textContent = data.lastUpdated ? new Date(data.lastUpdated).toLocaleTimeString() : '从未更新';
+                // 更新IP列表
+                const ipList = document.getElementById('ip-list');
+                const displayIPs = data.ips || [];
+                if (ipList) {
+                    if (displayIPs.length > 0) {
+                        ipList.innerHTML = displayIPs.map(function(item) {
+                            // 确保 address 存在
+                            const address = item?.address || 'unknown';
+                            const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+                            const location = item?.location || '未知';
+                            const latency = item?.latency;
+                            // 添加类型角标
+                            const parsed = parseAddressWithPort(address);
+                            let typeBadge = '';
+                            if (parsed.type === 'ipv6') {
+                              typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
+                            } else if (parsed.type === 'ipv4') {
+                              typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
+                            } else if (parsed.type === 'domain') {
+                              typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
+                            }
+                            // 格式化显示地址 - 只在端口不是443时显示端口
+                            let displayAddress = parsed.address;
+                            if (parsed.port !== "443") {
+                              if (parsed.type === 'ipv6') {
+                                displayAddress = '[' + displayAddress + ']:' + parsed.port;
+                              } else {
+                                displayAddress = displayAddress + ':' + parsed.port;
+                              }
+                            } else {
+                              if (parsed.type === 'ipv6' && !address.startsWith('[')) {
+                                displayAddress = '[' + displayAddress + ']';
+                              }
+                            }
+                            return '<div class="ip-item" data-ip="' + address + '">\
+                                <div class="ip-info">\
+                                    <span class="ip-address">' + displayAddress + '#' + location + (latency ? '_' + Math.round(latency) + 'ms' : '') + typeBadge + '</span>\
+                                    <span class="speed-result" id="speed-' + safeId + '">' + (latency ? Math.round(latency) + 'ms' : '-') + '</span>\
+                                </div>\
+                                <div class="action-buttons">\
+                                    <button class="small-btn" onclick="testSingleIP(\\\'' + address.replace(/'/g, "\\\\'") + '\\\')" id="test-' + safeId + '">测速</button>\
+                                    <button class="small-btn" onclick="copyIP(\\\'' + displayAddress.replace(/'/g, "\\\\'") + '\\\', \\\'' + location.replace(/'/g, "\\\\'") + '\\\', ' + (latency || 'null') + ')">复制</button>\
+                                </div>\
+                            </div>';
+                        }).join('');
+                        // 更新速度结果缓存 + 自动按延迟排序（修复核心）
+                        speedResults = {}; // 重置
+                        displayIPs.forEach(function(item) {
+                            const address = item?.address;
+                            const latency = item?.latency;
+                            if (address) {
+                                if (latency) {
+                                    speedResults[address] = { latency: latency, success: true };
+                                    const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+                                    const el = document.getElementById('speed-' + safeId);
+                                    if (el) {
+                                        const cls = latency < 200 ? 'speed-fast' : latency < 500 ? 'speed-medium' : 'speed-slow';
+                                        el.className = 'speed-result ' + cls;
+                                        el.textContent = Math.round(latency) + 'ms';
+                                    }
+                                } else {
+                                    speedResults[address] = { latency: Infinity, success: false };
+                                }
+                            }
+                        });
+
+                        // 关键：刷新页面或更新后自动按延迟从小到大排序
+                        sortBySpeed();
+                    } else {
+                        ipList.innerHTML = '<p style="text-align: center; color: #64748b; padding: 40px;">暂无 IP/域名 地址数据，请点击更新按钮获取</p>';
+                    }
+                }
+                // 更新来源
+                currentSourcesUrls = data.sources_urls || [];
+                const sources = document.getElementById('sources');
+                if (sources) {
+                    const sourcesDisplay = [];
+                    const sourceMap = new Map();
+                    if (data.sources && data.sources.length > 0) {
+                        data.sources.forEach(s => sourceMap.set(s.name, s));
+                    }
+                    currentSourcesUrls.forEach(url => {
+  let hostname = url;
+  try {
+      hostname = new URL(url).hostname;
+  } catch (e) {}
+  const existing = sourceMap.get(url);
+  if (existing) {
+      sourcesDisplay.push({ ...existing, name: hostname });
+  } else {
+      sourcesDisplay.push({ name: hostname, status: "pending", count: 0, message: "新增站点" });
   }
-  function jsonResponse(data, status = 200) {
-    return new Response(JSON.stringify(data, null, 2), {
-      status,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-    });
+});
+                    if (sourcesDisplay.length > 0) {
+                        sources.innerHTML = sourcesDisplay.map(function(s) {
+                            const cls = s.status === 'success' ? '' : 'error';
+                            const text = s.status === 'success' ? '成功获取 ' + s.count + ' 个地址' :
+                                         s.status === 'pending' ? s.message :
+                                         '失败: ' + (s.error || '未知');
+                            return '<div class="source ' + cls + '">\
+                                <strong>' + s.name + '</strong>: ' + text + '\
+                            </div>';
+                        }).join('');
+                    } else {
+                        sources.innerHTML = '<p style="color: #64748b;">暂无数据来源信息</p>';
+                    }
+                }
+                // 更新黑名单
+                currentBlacklist = data.blacklist || [];
+                // 更新IP数量限制输入
+                const input = document.getElementById('ip-limit-input');
+                if (input) {
+                    if (data.limit) {
+                        input.value = data.limit;
+                        input.disabled = true;
+                        input.style.color = '#a0a0a0';
+                        input.style.backgroundColor = '#f0f0f0';
+                    } else {
+                        input.value = '';
+                        input.disabled = false;
+                        input.style.color = '';
+                        input.style.backgroundColor = '';
+                        input.placeholder = '无限制（显示最新全部）';
+                    }
+                }
+            } catch (e) { 
+                console.error('刷新数据失败:', e);
+                showMessage('刷新数据失败: ' + e.message, 'error');
+            }
+        }
+        document.addEventListener('DOMContentLoaded', function() {
+            // 添加全局错误处理
+            window.onerror = function(message, source, lineno, colno, error) {
+                console.error('全局错误:', message, error);
+                return true; // 阻止默认处理
+            };
+            // 防止未捕获的Promise拒绝
+            window.onunhandledrejection = function(event) {
+                console.error('未捕获的Promise拒绝:', event.reason);
+                event.preventDefault();
+            };
+            refreshData();
+        });
+    </script>
+</body>
+</html>`;
+  const headers = {
+    "Content-Type": "text/html;charset=utf-8",
+    "Access-Control-Allow-Origin": "*"
+  };
+  // 自动gzip如果支持
+  const acceptEncoding = request.headers.get('Accept-Encoding');
+  if (acceptEncoding && acceptEncoding.includes('gzip')) {
+    headers['Content-Encoding'] = 'gzip';
+    // 注意：在实际Worker中，需要压缩html字符串，这里简化假设浏览器处理
   }
-  function methodNotAllowed() {
-    return jsonResponse({ error: "Method not allowed" }, 405);
-  }
-  function handleCORS() {
-    return new Response(null, {
+  return new Response(html, { headers });
+}
+/* ====================== /ip.txt 和 /ips ====================== */
+async function handleGetIPs(env, attachment = false) {
+  const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
+  const data = await getIPsWithFallback(env, limit);
+  if (!data.ips || data.ips.length === 0) {
+    return new Response("", {
       headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
+        "Content-Type": "text/plain;charset=utf-8",
+        "Access-Control-Allow-Origin": "*"
       }
     });
   }
+  const txt = data.ips
+    // 按延迟升序排序，没有延迟的排到最后
+    .sort((a, b) => {
+      if (a.latency && b.latency) return a.latency - b.latency;
+      if (a.latency) return -1;
+      if (b.latency) return 1;
+      return 0;
+    })
+    .map(i => formatAddressOutput(i.address, i.location, i.latency))
+    .join('\n');
+  const headers = {
+    "Content-Type": "text/plain;charset=utf-8",
+    "Access-Control-Allow-Origin": "*"
+  };
+  if (attachment) {
+    headers["Content-Disposition"] = "attachment; filename=cloudflare_ips.txt";
+  }
+  return new Response(txt + '\n', { headers });
+}
+/* ====================== 其余接口适配 ====================== */
+async function handleRawIPs(env) {
+  const latest = await getStoredIPsLatest(env);
+  const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
+  const display = await getIPsWithFallback(env, limit);
+  const result = {
+    ...latest,
+    limit,
+    sources_urls: await getSources(env),
+    blacklist: display.blacklist,
+    totalUniqueIPs: await getAllUniqueIPCount(env),
+    ips: display.ips.sort((a, b) => {
+      if (a.latency && b.latency) return a.latency - b.latency;
+      if (a.latency) return -1;
+      if (b.latency) return 1;
+      return 0;
+    }),
+    count: display.count,
+    originalCount: display.originalCount || 0,
+  };
+  return jsonResponse(result);
+}
+async function handleItdogData(env) {
+  // ITDog只支持IPv4，所以需要过滤
+  const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
+  const data = await getIPsWithFallback(env, limit);
+  const ipv4Only = data.ips?.filter(item => {
+    const parsed = parseAddressWithPort(item.address);
+    return parsed.type === 'ipv4';
+  }) || [];
+  return jsonResponse({ ips: ipv4Only.map(i => i.address) || [], count: ipv4Only.length });
+}
+async function handleSpeedTest(req, env) {
+  const url = new URL(req.url);
+  const address = url.searchParams.get("ip");
+  if (!address) return jsonResponse({ error: "missing ip" }, 400);
+  const decodedAddress = decodeURIComponent(address);
+  const r = await testIPLatency(decodedAddress);
+  // 获取位置信息
+  let location = "未知";
+  const parsed = parseAddressWithPort(decodedAddress);
+  if (parsed.type === 'ipv6') {
+    // 使用 ipinfo.io 获取 IPv6 地理位置
+    try {
+      const response = await fetch(`https://ipinfo.io/${parsed.address}/json`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.country) {
+          location = data.country;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to get location for IPv6", parsed.address, e);
+    }
+  } else if (parsed.type === 'ipv4') {
+    // 使用 ip-api.com 获取 IPv4 地理位置
+    try {
+      const response = await fetch(`http://ip-api.com/json/${parsed.address}?fields=countryCode`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.countryCode) {
+          location = data.countryCode;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to get location for IPv4", parsed.address, e);
+    }
+  } else {
+    // 域名
+    location = parsed.address;
+  }
+  return jsonResponse({ 
+    success: r.success, 
+    latency: r.latency, 
+    ip: decodedAddress,
+    location: location
+  });
+}
+async function handleSaveLatency(req, env) { return jsonResponse({success:true}); }
+async function handleSetIpLimit(req, env) {
+const { limit } = await req.json();
+
+// 允许 null / 0 / 空 → 删除键，代表“无限制，显示最新全部”
+if (limit === null || limit === undefined || limit === 0 || limit === "") {
+  await env.IP_STORAGE.delete("ip_limit");
+  return jsonResponse({ success: true, message: "已取消数量限制，将显示最新批次全部IP" });
+}
+
+if (typeof limit !== 'number' || limit < 1 || !Number.isInteger(limit)) {
+  return jsonResponse({ error: "limit 必须为正整数" }, 400);
+}
+
+await env.IP_STORAGE.put("ip_limit", limit.toString());
+return jsonResponse({ success: true, message: `已限制显示 ${limit} 条` });
+}
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+  });
+}
+function methodNotAllowed() {
+  return jsonResponse({ error: "Method not allowed" }, 405);
+}
+function handleCORS() {
+  return new Response(null, {
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    }
+  });
+}
