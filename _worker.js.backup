@@ -445,7 +445,7 @@ async function handleUpdate(env) {
   console.log(`Need latency test: ${needLatencyTest.length}`);
   // 获取新的地理位置
   let newLocations = [];
-  if (needsLocationTest.length > 0) {
+  if (needLocationTest.length > 0) {
     newLocations = await getLocationsForAddresses(needLocationTest);
   }
   // 获取新的延迟信息
@@ -2295,3 +2295,4 @@ function handleCORS() {
     }
   });
 }
+
