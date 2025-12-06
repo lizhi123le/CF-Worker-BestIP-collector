@@ -764,81 +764,76 @@ async function batchTestLatency(addresses, concurrency = 4) {
 }
 /* ====================== 清理旧历史数据 ====================== */
 async function cleanupOldIPs(env) {
-const LIST_LIMIT = 100;
-let cursor = null;
-const historyItems = []; // { name, date, size }
-let totalSize = 0;
-const now = Date.now();
-const oneWeekAgo = now - 2 * 24 * 60 * 60 * 1000; // 改成真正的 2 天
+  const LIST_LIMIT = 100;
+  let cursor = null;
+  const now = Date.now();
+  
+  // 【配置区】—— 建议你改成 2 天 + 至少保留 10 条 + 总大小不超过 1MB
+  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;        // 2天
+  const MIN_KEEP_COUNT = 10;                         // 至少保留最新10条（无论多老）
+  const MAX_TOTAL_SIZE = 1_000_000;                  // 1MB
 
-// 第一步：分页读取所有 key 并计算大小
-do {
-  const list = await env.IP_STORAGE.list({
-    prefix: "cloudflare_ips_",
-    limit: LIST_LIMIT,
-    cursor
-  });
+  const items = []; // { name, date, size }
 
-  // 并行获取值并计算大小（加速）
-  const fetchPromises = list.keys.map(async (key) => {
-    const date = parseTimestampKey(key.name);
-    if (!date) return null;
+  // Step 1: 收集所有 key + size（尽量不读 value，节省费用）
+  do {
+    const list = await env.IP_STORAGE.list({
+      prefix: "cloudflare_ips_",
+      limit: LIST_LIMIT,
+      cursor
+    });
 
-    const value = await env.IP_STORAGE.get(key.name);
-    if (!value) return null;
+    const metaPromises = list.keys.map(async (k) => {
+      // 使用 getWithMetadata 可以避免读大 value
+      const { metadata, size } = await env.IP_STORAGE.getWithMetadata(k.name, { type: "text" });
+      const date = parseTimestampKey(k.name);
+      if (!date) return null;
+      // 如果你之前没存 metadata，这里 size 就是 value 的字节数
+      return { name: k.name, date, size: size ?? 0 };
+    });
 
-    const size = new TextEncoder().encode(value).length;
-    return { name: key.name, date, size };
-  });
+    const batch = (await Promise.all(metaPromises)).filter(Boolean);
+    items.push(...batch);
 
-  const items = (await Promise.all(fetchPromises)).filter(Boolean);
-  for (const item of items) {
-    historyItems.push(item);
-    totalSize += item.size;
+    cursor = list.cursor;
+  } while (cursor);
+
+  if (items.length <= MIN_KEEP_COUNT) {
+    console.log("少于最小保留数量，无需清理");
+    return;
   }
 
-  cursor = list.cursor;
-} while (cursor);
+  // 按时间降序（新 → 旧）
+  items.sort((a, b) => b.date - a.date);
 
-console.log(`KV total size (cloudflare_ips_*) = ${totalSize} bytes`);
-if (historyItems.length <= 10) {
-  console.log("少于10条记录，无需清理");
-  return;
-}
+  const toDelete = new Set();
+  let currentSize = items.reduce((s, i) => s + i.size, 0);
 
-// 按时间降序（新→旧）
-historyItems.sort((a, b) => b.date - a.date);
-
-const toDelete = new Set();
-
-// 规则1：超过7天的直接删除（即使在前10条之外）
-for (let i = 10; i < historyItems.length; i++) {
-  if (historyItems[i].date <= oneWeekAgo) {
-    toDelete.add(historyItems[i].name);
+  // Step 2: 先删除“超龄且不在强制保留区”的记录
+  for (let i = MIN_KEEP_COUNT; i < items.length; i++) {
+    if (items[i].date.getTime() < now - MAX_AGE_MS) {
+      toDelete.add(items[i].name);
+      currentSize -= items[i].size;
+    }
   }
-}
 
-// 规则2：总大小超 1MB，继续删最旧的，直到 < 1MB（保留至少10条最新）
-let currentSize = totalSize;
-for (let i = historyItems.length - 1; i >= 10; i--) { // 从最旧的开始删
-  if (currentSize <= 1_000_000) break;
-
-  const item = historyItems[i];
-  if (!toDelete.has(item.name)) {
-    toDelete.add(item.name);
-    currentSize -= item.size;
+  // Step 3: 如果总大小还超标，继续删最旧的（但绝不删前 MIN_KEEP_COUNT 条）
+  for (let i = items.length - 1; i >= MIN_KEEP_COUNT; i--) {
+    if (currentSize <= MAX_TOTAL_SIZE) break;
+    if (!toDelete.has(items[i].name)) {
+      toDelete.add(items[i].name);
+      currentSize -= items[i].size;
+    }
   }
-}
 
-if (toDelete.size > 0) {
-  console.log(`Deleting ${toDelete.size} old entries`);
-  // 正确方式：并行删除单个 key
-  await Promise.all(
-    Array.from(toDelete).map(key => env.IP_STORAGE.delete(key))
-  );
-} else {
-  console.log("无需删除任何记录");
-}
+  if (toDelete.size > 0) {
+    console.log(`[清理] 将删除 ${toDelete.size} 条历史记录（超龄或超大小）`);
+    await Promise.all(
+      Array.from(toDelete).map(name => env.IP_STORAGE.delete(name))
+    );
+  } else {
+    console.log("[清理] 无需删除");
+  }
 }
 /* ====================== 来源管理 ====================== */
 const defaultUrls = [
