@@ -1167,10 +1167,10 @@ async function serveHTML(env, request) {
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
-		.admin-button { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 50%; transform: translateY(-50%); min-width: 120px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
+		.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 25%; transform: translateY(-50%); min-width: 120px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
 		.admin-button:hover { background: #2563eb; }
-		.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -46px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 120px; overflow: hidden; }
-		.admin-dropdown button { width: 100%; padding: 10px 20px; border: none; background: #ef4444; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+		.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -76px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 120px; overflow: hidden; }
+		.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
 		.admin-dropdown button:hover { background: #dc2626;}
         .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
@@ -1268,9 +1268,9 @@ async function serveHTML(env, request) {
             </div>
             ${showAdminButton ? `
             <div class="admin-panel">
-                <button class="admin-button" onclick="toggleAdminDropdown()">管 理 员  🔽</button>
+                <button class="admin-button" onclick="toggleAdminDropdown()">👤管理员🔽</button>
                 <div class="admin-dropdown" id="admin-dropdown">
-                    <button onclick="handleLogout()">登     出  ⏏️</button>
+                    <button onclick="handleLogout()">👤 登 出 ⏏️</button>
                 </div>
             </div>
             ` : ''}
