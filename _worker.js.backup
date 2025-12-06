@@ -25,6 +25,10 @@ export default {
         case "/set-sources": return request.method === "POST" ? await handleSetSources(request, env) : methodNotAllowed();
         case "/set-blacklist": return request.method === "POST" ? await handleSetBlacklist(request, env) : methodNotAllowed();
         case "/set-path": return request.method === "POST" ? await handleSetPath(request, env) : methodNotAllowed();
+        case "/admin-set-password": return request.method === "POST" ? await handleSetPassword(request, env) : methodNotAllowed();
+        case "/admin-login": return request.method === "POST" ? await handleLogin(request, env) : methodNotAllowed();
+        case "/admin-logout": return await handleLogout(request, env);
+        case "/admin-status": return await handleAdminStatus(request, env);
         default: return jsonResponse({ error: "Not found" }, 404);
       }
     } catch (e) {
@@ -441,7 +445,7 @@ async function handleUpdate(env) {
   console.log(`Need latency test: ${needLatencyTest.length}`);
   // 获取新的地理位置
   let newLocations = [];
-  if (needLocationTest.length > 0) {
+  if (needsLocationTest.length > 0) {
     newLocations = await getLocationsForAddresses(needLocationTest);
   }
   // 获取新的延迟信息
@@ -1047,8 +1051,75 @@ return {
   blacklist: blacklistRaw
 };
 }
+/* ====================== 管理员功能 ====================== */
+async function hashPassword(password) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return btoa(String.fromCharCode(...hashArray));
+}
+
+async function getAdminStatus(env, request) {
+  const cookie = request.headers.get('Cookie') || '';
+  let isLoggedIn = false;
+  if (cookie) {
+    const match = cookie.match(/admin_session=([^;]+)/);
+    if (match) {
+      try {
+        const token = atob(match[1].split('=')[0]);
+        const now = Date.now();
+        const tokenTime = parseInt(token);
+        if (!isNaN(tokenTime) && now - tokenTime < 24 * 60 * 60 * 1000) {
+          isLoggedIn = true;
+        }
+      } catch {}
+    }
+  }
+  const hasPassword = !!(await env.IP_STORAGE.get('admin_password_hash'));
+  return { isLoggedIn, hasPassword };
+}
+
+async function handleSetPassword(req, env) {
+  const { password } = await req.json();
+  if (!password || typeof password !== 'string' || password.length < 4) {
+    return jsonResponse({ error: "密码无效，至少4位" }, 400);
+  }
+  const hashed = await hashPassword(password);
+  await env.IP_STORAGE.put('admin_password_hash', hashed);
+  return jsonResponse({ success: true });
+}
+
+async function handleLogin(req, env) {
+  const { password } = await req.json();
+  if (!password) return jsonResponse({ error: '缺少密码' }, 400);
+  const storedHash = await env.IP_STORAGE.get('admin_password_hash');
+  if (!storedHash) return jsonResponse({ error: '未设置密码，请先设置' }, 401);
+  const inputHash = await hashPassword(password);
+  if (inputHash !== storedHash) return jsonResponse({ error: '密码错误' }, 401);
+  const now = Date.now();
+  const token = btoa(now.toString());
+  const expires = new Date(now + 24 * 60 * 60 * 1000).toUTCString();
+  const headers = new Headers();
+  headers.append('Set-Cookie', `admin_session=${token}=${token}; Path=/; Expires=${expires}; HttpOnly; Secure; SameSite=Strict`);
+  headers.append('Content-Type', 'application/json');
+  return new Response(JSON.stringify({ success: true }), { status: 200, headers });
+}
+
+async function handleLogout(req, env) {
+  const headers = new Headers();
+  headers.append('Set-Cookie', `admin_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Strict`);
+  headers.append('Content-Type', 'application/json');
+  return new Response(JSON.stringify({ success: true }), { status: 200, headers });
+}
+
+async function handleAdminStatus(req, env) {
+  const status = await getAdminStatus(env, req);
+  return jsonResponse(status);
+}
 /* ====================== 页面与接口 ====================== */
 async function serveHTML(env, request) {
+  const adminStatus = await getAdminStatus(env, request);
   const latest = await getStoredIPsLatest(env);
   const totalUnique = await getAllUniqueIPCount(env);
   const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
@@ -1068,9 +1139,13 @@ async function serveHTML(env, request) {
     ips: displayData.ips,
     count: displayData.count,
     originalCount: displayData.originalCount || 0,
+    adminStatus
   };
   const ipsHref = data.customPath ? '/' + data.customPath + '/ips' : '/ips';
   const ipTxtHref = data.customPath ? '/' + data.customPath + '/ip.txt' : '/ip.txt';
+  const showSetPassword = !data.adminStatus.hasPassword;
+  const showLogin = data.adminStatus.hasPassword && !data.adminStatus.isLoggedIn;
+  const showAdminButton = data.adminStatus.isLoggedIn;
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1081,7 +1156,7 @@ async function serveHTML(env, request) {
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; background: #f8fafc; color: #334155; min-height: 100vh; padding: 20px; }
         .container { max-width: 1200px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; position: relative; }
         .header-content h1 { font-size: 2.5rem; background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; font-weight: 700; }
         .header-content p { color: #64748b; font-size: 1.1rem; }
         .social-links { display: flex; gap: 15px; }
@@ -1092,6 +1167,11 @@ async function serveHTML(env, request) {
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
+		.admin-button { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 50%; transform: translateY(-50%); min-width: 120px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
+		.admin-button:hover { background: #2563eb; }
+		.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -46px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 120px; overflow: hidden; }
+		.admin-dropdown button { width: 100%; padding: 10px 20px; border: none; background: #ef4444; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+		.admin-dropdown button:hover { background: #dc2626;}
         .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
@@ -1138,6 +1218,13 @@ async function serveHTML(env, request) {
         .source { padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #10b981; }
         .source.error { border-left-color: #ef4444; }
         .footer { text-align: center; margin-top: 40px; padding-top: 30px; border-top: 1px solid #e2e8f0; color: #64748b; }
+        .admin-overlay { ${showSetPassword || showLogin ? 'display: flex;' : 'display: none;'} position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 9999; justify-content: center; align-items: center; }
+        .admin-modal { background: white; padding: 40px; border-radius: 16px; max-width: 400px; width: 90%; text-align: center; border: 1px solid #e2e8f0; box-shadow: 0 20px 25px rgba(0,0,0,0.1); }
+        .admin-modal h3 { margin-bottom: 20px; color: #1e40af; }
+        .admin-modal input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 16px; font-size: 1rem; }
+        .admin-modal button { padding: 12px 24px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; margin: 0 8px; }
+        .admin-modal .btn-primary { background: #3b82f6; color: white; }
+        .admin-modal .btn-secondary { background: white; color: #475569; border: 1px solid #cbd5e1; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 1000; justify-content: center; align-items: center; }
         .modal-content { background: white; padding: 30px; border-radius: 16px; max-width: 500px; width: 90%; border: 1px solid #e2e8f0; box-shadow: 0 20px 25px rgba(0,0,0,0.1); }
         .modal h3 { margin-bottom: 16px; color: #1e40af; }
@@ -1151,6 +1238,7 @@ async function serveHTML(env, request) {
             .ip-info { width: 100%; justify-content: space-between; }
             .action-buttons { width: 100%; justify-content: flex-end; }
             .modal-buttons { flex-direction: column; }
+            .admin-modal { padding: 20px; }
         }
     </style>
 </head>
@@ -1178,6 +1266,14 @@ async function serveHTML(env, request) {
                     </svg>
                 </a>
             </div>
+            ${showAdminButton ? `
+            <div class="admin-panel">
+                <button class="admin-button" onclick="toggleAdminDropdown()">管 理 员  🔽</button>
+                <div class="admin-dropdown" id="admin-dropdown">
+                    <button onclick="handleLogout()">登     出  ⏏️</button>
+                </div>
+            </div>
+            ` : ''}
         </div>
         <div class="card">
             <h2>📊 系统状态</h2>
@@ -1280,6 +1376,32 @@ async function serveHTML(env, request) {
             <p>Cloudflare IP/域名 Collector © ${new Date().getFullYear()} | 增强版：完美支持 IPv6 和域名</p>
         </div>
     </div>
+    ${showSetPassword ? `
+    <div class="admin-overlay" id="admin-overlay">
+        <div class="admin-modal">
+            <h3>🔐 设置管理员密码</h3>
+            <p>首次使用，请设置管理员密码以保护页面。</p>
+            <input type="password" id="set-password-input" placeholder="输入密码（至少4位）">
+            <div>
+                <button class="btn-secondary" onclick="closeAdminOverlay()">取消</button>
+                <button class="btn-primary" onclick="setAdminPassword()">设置密码</button>
+            </div>
+        </div>
+    </div>
+    ` : ''}
+    ${showLogin ? `
+    <div class="admin-overlay" id="admin-overlay">
+        <div class="admin-modal">
+            <h3>🔐 管理员登录</h3>
+            <p>请输入管理员密码以访问页面。</p>
+            <input type="password" id="login-password-input" placeholder="输入密码">
+            <div>
+                <button class="btn-secondary" onclick="closeAdminOverlay()">取消</button>
+                <button class="btn-primary" onclick="loginAdmin()">登录</button>
+            </div>
+        </div>
+    </div>
+    ` : ''}
     <div class="modal" id="path-modal">
         <div class="modal-content">
             <h3>⛓️ 设置路径</h3>
@@ -1315,6 +1437,62 @@ async function serveHTML(env, request) {
         </div>
     </div>
     <script>
+        // 管理员相关
+        function toggleAdminDropdown() {
+            const dropdown = document.getElementById('admin-dropdown');
+            if (dropdown) dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+        }
+        async function setAdminPassword() {
+            const input = document.getElementById('set-password-input');
+            if (!input || input.value.length < 4) return alert('密码至少4位');
+            try {
+                const response = await fetch('/admin-set-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: input.value })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('设置失败: ' + (data.error || '未知错误'));
+                }
+            } catch (error) {
+                alert('设置失败: ' + error.message);
+            }
+        }
+        async function loginAdmin() {
+            const input = document.getElementById('login-password-input');
+            if (!input || !input.value) return alert('请输入密码');
+            try {
+                const response = await fetch('/admin-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: input.value })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('登录失败: ' + (data.error || '未知错误'));
+                }
+            } catch (error) {
+                alert('登录失败: ' + error.message);
+            }
+        }
+        function closeAdminOverlay() {
+            const overlay = document.getElementById('admin-overlay');
+            if (overlay) overlay.style.display = 'none';
+        }
+        async function handleLogout() {
+            try {
+                await fetch('/admin-logout', { method: 'POST' });
+                location.reload();
+            } catch (error) {
+                alert('登出失败: ' + error.message);
+            }
+        }
+        // 原有JS代码...
         // 解析地址类型
         function parseAddressWithPort(address) {
           let addrPart, portPart = "443";
@@ -1643,7 +1821,7 @@ async function serveHTML(env, request) {
             ipItems.sort(function(a, b) {
                 const ra = speedResults[a.dataset.ip];
                 const rb = speedResults[b.dataset.ip];
-			if (ra && rb) return ra.latency - rb.latency; 
+            if (ra && rb) return ra.latency - rb.latency; 
             if (ra) return -1;
             if (rb) return 1;
             return 0;
@@ -1960,6 +2138,13 @@ async function serveHTML(env, request) {
         };
         updateLinks();
         refreshData();
+        // 隐藏下拉菜单点击外部
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.admin-panel')) {
+                const dropdown = document.getElementById('admin-dropdown');
+                if (dropdown) dropdown.style.display = 'none';
+            }
+        });
     });
 </script></body>
 </html>`;
