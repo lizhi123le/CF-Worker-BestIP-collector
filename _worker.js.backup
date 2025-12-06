@@ -1396,7 +1396,6 @@ async function serveHTML(env, request) {
             <p>请输入管理员密码以访问页面。</p>
             <input type="password" id="login-password-input" placeholder="输入密码">
             <div>
-                <button class="btn-secondary" onclick="closeAdminOverlay()">取消</button>
                 <button class="btn-primary" onclick="loginAdmin()">登录</button>
             </div>
         </div>
@@ -2295,4 +2294,3 @@ function handleCORS() {
     }
   });
 }
-
