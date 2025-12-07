@@ -1233,7 +1233,9 @@ async function serveHTML(env, request) {
             .ip-info { width: 100%; justify-content: space-between; }
             .action-buttons { width: 100%; justify-content: flex-end; }
             .modal-buttons { flex-direction: column; }
+			.admin-dropdown { margin-top: -156px !important; min-width: 123px; }
             .admin-modal { padding: 20px; }
+			#ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
         }
     </style>
 </head>
@@ -1284,7 +1286,7 @@ async function serveHTML(env, request) {
                 <button class="button button-warning" onclick="startSpeedTest()" id="speedtest-btn">⚡ 开始测速</button>
                 <button class="button" onclick="openPathModal()">⛓️ 设置路径</button>
                 <button class="button button-secondary" onclick="refreshData()">🔄 刷新状态</button>
-                <input type="number" id="ip-limit-input" min="1" placeholder="IP数量" style="padding: 12px; border-radius: 10px; border: 1px solid #cbd5e1; width: 120px; font-size: 0.95rem;" value="${data.limit || ''}">
+                <input type="number" id="ip-limit-input" min="1" placeholder="IP数量" style="padding: 12px; border-radius: 10px; border: 1px solid #cbd5e1; min-width: 120px; max-width: 158px; font-size: 0.95rem;" value="${data.limit || ''}">
                 <button class="button" onclick="setIpLimit()" id="set-limit-btn">⚙️ 设置数量</button>
             </div>
             <div class="loading" id="loading"><div class="spinner"></div><p>正在从多个来源收集 IP/域名 地址，请稍候...</p></div>
