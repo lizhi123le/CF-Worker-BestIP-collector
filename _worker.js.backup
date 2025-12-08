@@ -1162,10 +1162,10 @@ async function serveHTML(env, request) {
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
-		.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 90px; max-width: 130px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
+		.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 123px; max-width: 130px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
 		.admin-button:hover { background: #2563eb; }
-		.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -68px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 90px; max-width: 130px; overflow: hidden; }
-		.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 90px; max-width: 130px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+		.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 130px; overflow: hidden; }
+		.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 130px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
 		.admin-dropdown button:hover { background: #dc2626;}
         .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
@@ -1233,7 +1233,7 @@ async function serveHTML(env, request) {
             .ip-info { width: 100%; justify-content: space-between; }
             .action-buttons { width: 100%; justify-content: flex-end; }
             .modal-buttons { flex-direction: column; }
-			.admin-dropdown { margin-top: -156px !important; min-width: 123px; }
+			.admin-dropdown { margin-top: -156px !important; min-width: 122px; }
             .admin-modal { padding: 20px; }
 			#ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
         }
