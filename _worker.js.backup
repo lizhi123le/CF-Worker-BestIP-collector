@@ -176,9 +176,9 @@ function parseAddressWithPort(address) {
     addrPart = parts[0];
     const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
     if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
-    return { 
-      address: addrPart.replace(/[\[\]]/g, ''), 
-      port: "443", 
+    return {
+      address: addrPart.replace(/[\[\]]/g, ''),
+      port: "443",
       type: type
     };
   }
@@ -189,9 +189,9 @@ function parseAddressWithPort(address) {
     if (!isValidPort(portPart)) return { address: address, port: "443", type: 'unknown' };
     const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
     if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
-    return { 
-      address: addrPart.replace(/[\[\]]/g, ''), 
-      port: portPart, 
+    return {
+      address: addrPart.replace(/[\[\]]/g, ''),
+      port: portPart,
       type: type
     };
   }
@@ -222,9 +222,9 @@ function parseFormattedAddress(formatted) {
     const ipv6End = addressPart.indexOf(']');
     const ipv6 = addressPart.substring(1, ipv6End);
     const port = addressPart.substring(ipv6End + 2) || "443";
-    return { 
-      address: `[${ipv6}]${port !== "443" ? ":" + port : ""}`, 
-      location, 
+    return {
+      address: `[${ipv6}]${port !== "443" ? ":" + port : ""}`,
+      location,
       latency: latency ? parseInt(latency, 10) : null,
       type: 'ipv6'
     };
@@ -378,15 +378,12 @@ function preprocessBlacklist(blacklist) {
   });
   return { exactSet, domainSet };
 }
-
 // 优化后的黑名单检查：O(1)精确匹配 + O(n)域名检查（n=黑名单大小，通常小）
 function isBlacklisted(address, blacklistPreprocessed) {
   const { exactSet, domainSet } = blacklistPreprocessed;
   if (exactSet.has(address)) return true;
-
   const parsedAddress = parseAddressWithPort(address);
   const addressBase = parsedAddress.address; // 基础地址（不带端口）
-
   // 只对域名类型检查子域名模式
   if (parsedAddress.type === 'domain' && domainSet.size > 0) {
     for (const domain of domainSet) {
@@ -395,7 +392,6 @@ function isBlacklisted(address, blacklistPreprocessed) {
       }
     }
   }
-
   return false;
 }
 /* ====================== 核心：更新 + 自动测速 ====================== */
@@ -461,7 +457,7 @@ async function handleUpdate(env) {
     // 如果在历史数据中找到位置信息
     if (knownLocations.has(address)) {
       location = knownLocations.get(address);
-    } 
+    }
     // 否则使用新获取的位置信息
     else {
       const index = needLocationTest.indexOf(address);
@@ -472,7 +468,7 @@ async function handleUpdate(env) {
     // 如果在历史数据中找到延迟信息
     if (knownLatencies.has(address)) {
       latency = knownLatencies.get(address);
-    } 
+    }
     // 否则使用新获取的延迟信息
     else {
       const index = needLatencyTest.indexOf(address);
@@ -547,8 +543,10 @@ async function getRecentHistoryData(env, limit = 3) {
 /* ====================== 地址收集 —— 支持 IPv4、IPv6 和域名 ====================== */
 async function updateAllAddresses(env) {
   const urls = await getSources(env);
-  const uniqueAddresses = new Set();
+  const uniqueAddressesSet = new Set();
   const results = [];
+  const blacklistRaw = await getBlacklist(env);
+  const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
   for (let i = 0; i < urls.length; i += 3) {
     const batch = urls.slice(i, i + 3);
     const settled = await Promise.allSettled(batch.map(u => fetchURLWithTimeout(u)));
@@ -559,7 +557,11 @@ async function updateAllAddresses(env) {
       if (res.status === "fulfilled") {
         const addresses = extractAddressesFromHTML(res.value);
         console.log(`URL ${url} extracted ${addresses.length} addresses:`, addresses);
-        addresses.forEach(addr => uniqueAddresses.add(addr));
+        addresses.forEach(addr => {
+          if (!isBlacklisted(addr, blacklistPreprocessed)) {
+            uniqueAddressesSet.add(addr);
+          }
+        });
         results.push({ name, status: "success", count: addresses.length });
       } else {
         console.error(`Failed to fetch ${url}:`, res.reason);
@@ -568,29 +570,26 @@ async function updateAllAddresses(env) {
     });
     if (i + 3 < urls.length) await new Promise(r => setTimeout(r, 300)); // 动态延迟优化
   }
-  const sortedAddresses = Array.from(uniqueAddresses).sort((a, b) => {
+  const sortedAddresses = Array.from(uniqueAddressesSet).sort((a, b) => {
     const parsedA = parseAddressWithPort(a);
     const parsedB = parseAddressWithPort(b);
-    // 排序优先级: IPv4 -> IPv6 -> 域名
-    if (parsedA.type === 'ipv4' && parsedB.type !== 'ipv4') return -1;
-    if (parsedA.type !== 'ipv4' && parsedB.type === 'ipv4') return 1;
+    // 排序优先级: 域名 -> IPv4 -> IPv6
+    const priority = { 'domain': 0, 'ipv4': 1, 'ipv6': 2, 'unknown': 3 };
+    const priA = priority[parsedA.type];
+    const priB = priority[parsedB.type];
+    if (priA !== priB) return priA - priB;
+    // 同类型内排序
     if (parsedA.type === 'ipv4' && parsedB.type === 'ipv4') {
       const pa = parsedA.address.split(".").map(Number);
       const pb = parsedB.address.split(".").map(Number);
       for (let i = 0; i < 4; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
       return parseInt(parsedA.port) - parseInt(parsedB.port);
     }
-    if (parsedA.type === 'ipv6' && parsedB.type !== 'ipv6') return -1;
-    if (parsedA.type !== 'ipv6' && parsedB.type === 'ipv6') return 1;
     if (parsedA.type === 'ipv6' && parsedB.type === 'ipv6') {
-      // 按字符串排序 IPv6
       if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
       return parseInt(parsedA.port) - parseInt(parsedB.port);
     }
-    if (parsedA.type === 'domain' && parsedB.type !== 'domain') return -1;
-    if (parsedA.type !== 'domain' && parsedB.type === 'domain') return 1;
     if (parsedA.type === 'domain' && parsedB.type === 'domain') {
-      // 按域名排序
       if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
       return parseInt(parsedA.port) - parseInt(parsedB.port);
     }
@@ -612,10 +611,10 @@ async function getLocationsForAddresses(addresses) {
   for (let i = 0; i < addresses.length; i++) {
     const addr = addresses[i];
     const parsed = parseAddressWithPort(addr);
-    // 域名使用自身的主机名作为位置
+    // 域名初始位置设置为域名本身（作为回退）
     if (parsed.type === 'domain') {
-      locs[i] = parsed.address;
-    } 
+      locs[i] = parsed.address; // 初始回退为域名
+    }
     // IPv4和IPv6的位置将在下面获取
   }
   // 只对IPv4地址使用IP-API
@@ -624,6 +623,9 @@ async function getLocationsForAddresses(addresses) {
   // 只对IPv6地址使用ipinfo.io
   const ipv6Addresses = [];
   const ipv6Indices = [];
+  // 新增：收集域名地址
+  const domainAddresses = [];
+  const domainIndices = [];
   addresses.forEach((addr, index) => {
     const parsed = parseAddressWithPort(addr);
     if (parsed.type === 'ipv4') {
@@ -632,9 +634,12 @@ async function getLocationsForAddresses(addresses) {
     } else if (parsed.type === 'ipv6') {
       ipv6Addresses.push(parsed.address);
       ipv6Indices.push(index);
+    } else if (parsed.type === 'domain') {
+      domainAddresses.push(parsed.address);
+      domainIndices.push(index);
     }
   });
-  // 处理IPv4地理位置
+  // 处理IPv4地理位置（不变）
   for (let i = 0; i < ipv4Addresses.length; i += batchSize) {
     const batchIndices = ipv4Indices.slice(i, i + batchSize);
     const batch = ipv4Addresses.slice(i, i + batchSize).map(ip => ({
@@ -660,7 +665,7 @@ async function getLocationsForAddresses(addresses) {
     }
     if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
   }
-  // 处理IPv6地理位置，批量每5个
+  // 处理IPv6地理位置（不变）
   const ipv6BatchSize = 4;
   for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
     const batch = ipv6Addresses.slice(i, i + ipv6BatchSize);
@@ -694,10 +699,50 @@ async function getLocationsForAddresses(addresses) {
         } catch (se) {
           console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
         }
-        if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 3000));
+        if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 1500));
       }
     }
-    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 2000));
+    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1500));
+  }
+  // 增强：处理域名地理位置，先用DoH解析IP，然后用 https://api.ipapi.is/?q=IP 查询
+  const domainBatchSize = 4; // 小批量，避免限速
+  for (let i = 0; i < domainAddresses.length; i += domainBatchSize) {
+    const batch = domainAddresses.slice(i, i + domainBatchSize);
+    const batchIndices = domainIndices.slice(i, i + domainBatchSize);
+    await Promise.all(batch.map(async (domain, j) => {
+      try {
+        // Step 1: 用Cloudflare DoH解析域名到IPv4 IP
+        const dohUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=A`;
+        const dohResponse = await fetch(dohUrl, {
+          headers: { 'Accept': 'application/dns-json' }
+        });
+        if (!dohResponse.ok) throw new Error(`DoH 请求失败: ${dohResponse.status}`);
+        const dohData = await dohResponse.json();
+        if (dohData.Status !== 0 || !dohData.Answer) throw new Error('DoH 无有效响应');
+       
+        // 提取第一个A记录 (type=1) 的IP
+        const ipRecord = dohData.Answer.find(ans => ans.type === 1);
+        if (!ipRecord || !ipRecord.data) throw new Error('无IPv4记录');
+        const ip = ipRecord.data;
+       
+        // Step 2: 用IP查询API
+        const apiUrl = `https://api.ipapi.is/?q=${encodeURIComponent(ip)}`;
+        const apiResponse = await fetch(apiUrl);
+        if (!apiResponse.ok) throw new Error(`API 请求失败: ${apiResponse.status}`);
+        const locationData = await apiResponse.json();
+       
+        // Step 3: 提取location.country_code
+        const countryCode = locationData?.location?.country_code;
+        if (countryCode) {
+          locs[batchIndices[j]] = countryCode; // 成功：覆盖为国家代码
+        }
+        // else: 保持回退域名
+      } catch (e) {
+        console.error(`域名位置查询失败 for ${domain}:`, e);
+        // 失败：保持初始回退域名
+      }
+    }));
+    if (i + domainBatchSize < domainAddresses.length) await new Promise(r => setTimeout(r, 1200)); // 批次间隔1秒
   }
   return locs;
 }
@@ -767,14 +812,12 @@ async function cleanupOldIPs(env) {
   const LIST_LIMIT = 100;
   let cursor = null;
   const now = Date.now();
-  
+ 
   // 【配置区】—— 建议你改成 2 天 + 至少保留 10 条 + 总大小不超过 1MB
-  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;        // 2天
-  const MIN_KEEP_COUNT = 10;                         // 至少保留最新10条（无论多老）
-  const MAX_TOTAL_SIZE = 1_000_000;                  // 1MB
-
+  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000; // 2天
+  const MIN_KEEP_COUNT = 10; // 至少保留最新10条（无论多老）
+  const MAX_TOTAL_SIZE = 1_000_000; // 1MB
   const items = []; // { name, date, size }
-
   // Step 1: 收集所有 key + size（尽量不读 value，节省费用）
   do {
     const list = await env.IP_STORAGE.list({
@@ -782,7 +825,6 @@ async function cleanupOldIPs(env) {
       limit: LIST_LIMIT,
       cursor
     });
-
     const metaPromises = list.keys.map(async (k) => {
       // 使用 getWithMetadata 可以避免读大 value
       const { metadata, size } = await env.IP_STORAGE.getWithMetadata(k.name, { type: "text" });
@@ -791,24 +833,18 @@ async function cleanupOldIPs(env) {
       // 如果你之前没存 metadata，这里 size 就是 value 的字节数
       return { name: k.name, date, size: size ?? 0 };
     });
-
     const batch = (await Promise.all(metaPromises)).filter(Boolean);
     items.push(...batch);
-
     cursor = list.cursor;
   } while (cursor);
-
   if (items.length <= MIN_KEEP_COUNT) {
     console.log("少于最小保留数量，无需清理");
     return;
   }
-
   // 按时间降序（新 → 旧）
   items.sort((a, b) => b.date - a.date);
-
   const toDelete = new Set();
   let currentSize = items.reduce((s, i) => s + i.size, 0);
-
   // Step 2: 先删除“超龄且不在强制保留区”的记录
   for (let i = MIN_KEEP_COUNT; i < items.length; i++) {
     if (items[i].date.getTime() < now - MAX_AGE_MS) {
@@ -816,7 +852,6 @@ async function cleanupOldIPs(env) {
       currentSize -= items[i].size;
     }
   }
-
   // Step 3: 如果总大小还超标，继续删最旧的（但绝不删前 MIN_KEEP_COUNT 条）
   for (let i = items.length - 1; i >= MIN_KEEP_COUNT; i--) {
     if (currentSize <= MAX_TOTAL_SIZE) break;
@@ -825,7 +860,6 @@ async function cleanupOldIPs(env) {
       currentSize -= items[i].size;
     }
   }
-
   if (toDelete.size > 0) {
     console.log(`[清理] 将删除 ${toDelete.size} 条历史记录（超龄或超大小）`);
     await Promise.all(
@@ -917,7 +951,6 @@ async function batchGetKV(env, keys) {
   const values = await Promise.all(promises);
   return values.map((value, idx) => ({ key: keys[idx], value }));
 }
-
 async function getAllUniqueIPCount(env) {
   const blacklistRaw = await getBlacklist(env);
   const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
@@ -931,7 +964,6 @@ async function getAllUniqueIPCount(env) {
     list.keys.forEach(key => allKeys.push(key));
     cursor = list.cursor;
   } while (cursor);
-
   // 批量获取值（分批以避免内存峰值）
   const BATCH_SIZE = 10; // 每个批次处理10个键
   for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
@@ -960,7 +992,6 @@ async function getAllUniqueIPCount(env) {
 async function getIPsWithFallback(env, limit = null) {
 const blacklistRaw = await getBlacklist(env);
 const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
-
 // 获取最近10条历史记录（足够补足）
 const historicalData = await getRecentHistoryData(env, 60);
 if (historicalData.length === 0) {
@@ -973,15 +1004,12 @@ if (historicalData.length === 0) {
     blacklist: blacklistRaw
   };
 }
-
 const latest = historicalData[0]; // 最新一批
 const result = [];
 const addressSet = new Set();
-
 // Step 1: 处理最新批次
 let latestIPs = (latest.ips || [])
   .filter(item => item && item.address && !isBlacklisted(item.address, blacklistPreprocessed));
-
 // 按延迟升序排序（无延迟排后面）
 latestIPs.sort((a, b) => {
   if (a.latency && b.latency) return a.latency - b.latency;
@@ -989,9 +1017,7 @@ latestIPs.sort((a, b) => {
   if (b.latency) return 1;
   return 0;
 });
-
 const latestCount = latestIPs.length;
-
 // 如果 limit 为 null 或 <= 0，视为“显示最新全部”
 if (!limit || limit <= 0) {
   latestIPs.forEach(item => {
@@ -1011,15 +1037,12 @@ if (!limit || limit <= 0) {
     result.push(item);
   });
 }
-
 // Step 2: 如果还需要补足（limit > latestCount 且 limit > 0）
 if (limit > 0 && result.length < limit) {
   const need = limit - result.length;
-
   for (let i = 1; i < historicalData.length && result.length < limit; i++) {
     const batch = historicalData[i];
     if (!batch.ips || !Array.isArray(batch.ips)) continue;
-
     let candidates = batch.ips
       .filter(item => item && item.address && !addressSet.has(item.address) && !isBlacklisted(item.address, blacklistPreprocessed))
       .sort((a, b) => {
@@ -1028,7 +1051,6 @@ if (limit > 0 && result.length < limit) {
         if (b.latency) return 1;
         return 0;
       });
-
     for (const item of candidates) {
       if (result.length >= limit) break;
       addressSet.add(item.address);
@@ -1036,13 +1058,12 @@ if (limit > 0 && result.length < limit) {
     }
   }
 }
-
 return {
   ips: result,
   count: result.length,
   lastUpdated: latest.lastUpdated || new Date().toISOString(),
   sources: latest.sources || [],
-  originalCount: latestCount,        // 最新批次原始数量（用于前台显示）
+  originalCount: latestCount, // 最新批次原始数量（用于前台显示）
   blacklist: blacklistRaw
 };
 }
@@ -1054,7 +1075,6 @@ async function hashPassword(password) {
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return btoa(String.fromCharCode(...hashArray));
 }
-
 async function getAdminStatus(env, request) {
   const cookie = request.headers.get('Cookie') || '';
   let isLoggedIn = false;
@@ -1065,7 +1085,7 @@ async function getAdminStatus(env, request) {
         const token = atob(match[1].split('=')[0]);
         const now = Date.now();
         const tokenTime = parseInt(token);
-        if (!isNaN(tokenTime) && now - tokenTime < 24 * 60 * 60 * 1000) {
+        if (!isNaN(tokenTime) && now - tokenTime < 1 * 60 * 60 * 1000) {
           isLoggedIn = true;
         }
       } catch {}
@@ -1074,7 +1094,6 @@ async function getAdminStatus(env, request) {
   const hasPassword = !!(await env.IP_STORAGE.get('admin_password_hash'));
   return { isLoggedIn, hasPassword };
 }
-
 async function handleSetPassword(req, env) {
   const { password } = await req.json();
   if (!password || typeof password !== 'string' || password.length < 4) {
@@ -1084,7 +1103,6 @@ async function handleSetPassword(req, env) {
   await env.IP_STORAGE.put('admin_password_hash', hashed);
   return jsonResponse({ success: true });
 }
-
 async function handleLogin(req, env) {
   const { password } = await req.json();
   if (!password) return jsonResponse({ error: '缺少密码' }, 400);
@@ -1100,14 +1118,12 @@ async function handleLogin(req, env) {
   headers.append('Content-Type', 'application/json');
   return new Response(JSON.stringify({ success: true }), { status: 200, headers });
 }
-
 async function handleLogout(req, env) {
   const headers = new Headers();
   headers.append('Set-Cookie', `admin_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Strict`);
   headers.append('Content-Type', 'application/json');
   return new Response(JSON.stringify({ success: true }), { status: 200, headers });
 }
-
 async function handleAdminStatus(req, env) {
   const status = await getAdminStatus(env, req);
   return jsonResponse(status);
@@ -1162,11 +1178,11 @@ async function serveHTML(env, request) {
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
-		.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 123px; max-width: 130px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
-		.admin-button:hover { background: #2563eb; }
-		.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 130px; overflow: hidden; }
-		.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 130px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
-		.admin-dropdown button:hover { background: #dc2626;}
+.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 123px; max-width: 130px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
+.admin-button:hover { background: #2563eb; }
+.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 130px; overflow: hidden; }
+.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 130px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+.admin-dropdown button:hover { background: #dc2626;}
         .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
@@ -1233,9 +1249,9 @@ async function serveHTML(env, request) {
             .ip-info { width: 100%; justify-content: space-between; }
             .action-buttons { width: 100%; justify-content: flex-end; }
             .modal-buttons { flex-direction: column; }
-			.admin-dropdown { margin-top: -156px !important; min-width: 122px; }
+.admin-dropdown { margin-top: -156px !important; min-width: 122px; }
             .admin-modal { padding: 20px; }
-			#ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
+#ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
         }
     </style>
 </head>
@@ -1362,7 +1378,7 @@ async function serveHTML(env, request) {
     } catch (_) {}
     return `
       <div class="source ${source.status === 'success' ? '' : 'error'}">
-          <strong>${displayName}</strong>: 
+          <strong>${displayName}</strong>:
           ${source.status === 'success' ? '成功获取 ' + source.count + ' 个地址' : '失败: ' + source.error}
       </div>
     `;
@@ -1659,13 +1675,11 @@ async function serveHTML(env, request) {
             const speedElement = item.querySelector('.speed-result');
             const addressElement = item.querySelector('.ip-address');
             if (!addressElement) return;
-
             // 关键：从当前文本里提取类型角标（纯文本版）
             let typeBadgeText = '';
             if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
             else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
             else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
-
             // 根据类型生成完整的带样式的角标 HTML
             let typeBadge = '';
             if (typeBadgeText === 'IPv6') {
@@ -1732,8 +1746,8 @@ async function serveHTML(env, request) {
                 el.className = 'speed-result';
             });
             // 禁用所有测速按钮
-            document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) { 
-                if (btn) btn.disabled = true; 
+            document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) {
+                if (btn) btn.disabled = true;
             });
             for (let i = 0; i < totalIPs; i++) {
                 if (!isTesting) break;
@@ -1748,15 +1762,13 @@ async function serveHTML(env, request) {
                     const data = await response.json();
                     const latency = performance.now() - startTime;
                     const speedElement = ipItem.querySelector('.speed-result');
-                    const addressElement = ipItem.querySelector('.ip-address');		  
+                    const addressElement = ipItem.querySelector('.ip-address');
                     if (!addressElement) return;
-
                     // 关键：从当前文本里提取类型角标（纯文本版）
                     let typeBadgeText = '';
                     if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
                     else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
                     else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
-
                     // 根据类型生成完整的带样式的角标 HTML
                     let typeBadge = '';
                     if (typeBadgeText === 'IPv6') {
@@ -1804,8 +1816,8 @@ async function serveHTML(env, request) {
             speedtestBtn.textContent = '⚡ 开始测速';
             progressBar.style.display = 'none';
             // 重新启用所有测速按钮
-            document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) { 
-                if (btn) btn.disabled = false; 
+            document.querySelectorAll('.small-btn[id^="test-"]').forEach(function(btn) {
+                if (btn) btn.disabled = false;
             });
             sortBySpeed();
             showMessage('测速完成，已测试 ' + currentTestIndex + ' 个地址，已按延迟排序');
@@ -1817,14 +1829,14 @@ async function serveHTML(env, request) {
             ipItems.sort(function(a, b) {
                 const ra = speedResults[a.dataset.ip];
                 const rb = speedResults[b.dataset.ip];
-            if (ra && rb) return ra.latency - rb.latency; 
+            if (ra && rb) return ra.latency - rb.latency;
             if (ra) return -1;
             if (rb) return 1;
             return 0;
         });
         // 重新添加排序后的元素
-        ipItems.forEach(function(item) { 
-            if (item && ipList) ipList.appendChild(item); 
+        ipItems.forEach(function(item) {
+            if (item && ipList) ipList.appendChild(item);
         });
     }
     async function updateIPs() {
@@ -1860,17 +1872,14 @@ async function serveHTML(env, request) {
     async function setIpLimit() {
         const input = document.getElementById('ip-limit-input');
         const btn = document.getElementById('set-limit-btn');
-
         // 第一下点击 → 进入编辑模式
         if (!input.disabled) {
             const val = input.value.trim();
             const num = val === '' ? 0 : parseInt(val);
-
             if (isNaN(num) && val !== '') {
                 showMessage('请输入有效数字', 'error');
                 return;
             }
-
             btn.disabled = true;
             try {
                 const resp = await fetch('/set-limit', {
@@ -1901,7 +1910,6 @@ async function serveHTML(env, request) {
             }
             return;
         }
-
         // 已禁用状态 → 点击激活编辑
         input.disabled = false;
         input.style.color = '';
@@ -2053,7 +2061,6 @@ async function serveHTML(env, request) {
                             }
                         }
                     });
-
                     // 关键：刷新页面或更新后自动按延迟从小到大排序
                     sortBySpeed();
                 } else {
@@ -2116,7 +2123,7 @@ async function serveHTML(env, request) {
                     input.placeholder = '无限制（显示最新全部）';
                 }
             }
-        } catch (e) { 
+        } catch (e) {
             console.error('刷新数据失败:', e);
             showMessage('刷新数据失败: ' + e.message, 'error');
         }
@@ -2134,7 +2141,7 @@ async function serveHTML(env, request) {
         };
         updateLinks();
         refreshData();
-        // 隐藏下拉菜单点击外部
+        // 防止下拉菜单点击外部
         document.addEventListener('click', function(e) {
             if (!e.target.closest('.admin-panel')) {
                 const dropdown = document.getElementById('admin-dropdown');
@@ -2250,9 +2257,9 @@ async function handleSpeedTest(req, env) {
     // 域名
     location = parsed.address;
   }
-  return jsonResponse({ 
-    success: r.success, 
-    latency: r.latency, 
+  return jsonResponse({
+    success: r.success,
+    latency: r.latency,
     ip: decodedAddress,
     location: location
   });
@@ -2260,17 +2267,14 @@ async function handleSpeedTest(req, env) {
 async function handleSaveLatency(req, env) { return jsonResponse({success:true}); }
 async function handleSetIpLimit(req, env) {
     const { limit } = await req.json();
-
 // 允许 null / 0 / 空 → 删除键，代表“无限制，显示最新全部”
 if (limit === null || limit === undefined || limit === 0 || limit === "") {
     await env.IP_STORAGE.delete("ip_limit");
     return jsonResponse({ success: true, message: "已取消数量限制，将显示最新批次全部IP" });
 }
-
 if (typeof limit !== 'number' || limit < 1 || !Number.isInteger(limit)) {
     return jsonResponse({ error: "limit 必须为正整数" }, 400);
 }
-
 await env.IP_STORAGE.put("ip_limit", limit.toString());
 return jsonResponse({ success: true, message: `已限制显示 ${limit} 条` });}
 function jsonResponse(data, status = 200) {
