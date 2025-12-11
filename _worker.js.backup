@@ -205,7 +205,8 @@ function formatAddressOutput(address, location, latency) {
   if (parsed.type === 'ipv6') {
     return `[${parsed.address}]${portPart}#${location}${latencyPart}`;
   } else if (parsed.type === 'domain') {
-    return `${parsed.address}${portPart}#${parsed.address}${latencyPart}`;
+    const loc = location && location !== "未知" ? location : parsed.address;
+    return `${parsed.address}${portPart}#${loc}${latencyPart}`;
   } else {
     // IPv4
     return `${parsed.address}${portPart}#${location}${latencyPart}`;
@@ -290,36 +291,68 @@ const KEYWORDS = [
 ];
 /* ====================== 增强提取函数：支持 IPv6、白名单过滤 ====================== */
 function extractAddressesFromHTML(html) {
-  const set = new Set();
-  // 预编译正则
+  const map = new Map(); // Map<string, string | null> address => location
+  // 预编译正则 (updated to support Chinese in remarks with Unicode 'gu' flag)
   const patterns = {
-    ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?/g,
-    plainIpv6: /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?/g,
+    ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+    plainIpv6: /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
     attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
     backup: /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g,
-    combined: /(?:(?:\[[\w:]+(?::\d{1,5})?\])|(?:[\w.-]+(?::\d{1,5})?)|(?:[0-9a-fA-F:]+(?::\d{1,5})?)|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?))/gi
+    combined: /(?:(?:\[[\w:]+(?::\d{1,5})?\])|(?:[\w.-]+(?::\d{1,5})?)|(?:[0-9a-fA-F:]+(?::\d{1,5})?)|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?))(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu
   };
   // 单一pass合并提取所有候选
   let combinedMatch;
   while ((combinedMatch = patterns.combined.exec(html)) !== null) {
-    const candidate = combinedMatch[0];
-    if (isValidAddressWithPort(candidate)) {
-      const parsed = parseAddressWithPort(candidate);
+    let candidate = combinedMatch[0];
+    let addr = candidate;
+    let loc = null;
+    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1; // Use search to find # with possible space
+    if (hashIndex !== -1) {
+      addr = candidate.substring(0, hashIndex).trim(); // Trim to remove spaces
+      const rest = candidate.substring(hashIndex + 1).trim(); // Trim rest
+      loc = rest.replace(/^#/, '').split('_')[0]; // Remove # if needed, take first part
+    }
+    if (isValidAddressWithPort(addr)) {
+      const parsed = parseAddressWithPort(addr);
       if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-      set.add(candidate);
+      if (!map.has(addr)) {
+        map.set(addr, loc);
+      }
     }
   }
-  // 针对性后处理：IPv6 with brackets 和 plain IPv6
+  // ipv6WithBrackets
   let ipv6Match;
   while ((ipv6Match = patterns.ipv6WithBrackets.exec(html)) !== null) {
-    const fullMatch = ipv6Match[0];
-    if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
+    let candidate = ipv6Match[0];
+    let addr = candidate;
+    let loc = null;
+    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1;
+    if (hashIndex !== -1) {
+      addr = candidate.substring(0, hashIndex).trim();
+      const rest = candidate.substring(hashIndex + 1).trim();
+      loc = rest.replace(/^#/, '').split('_')[0];
+    }
+    const fullMatch = addr;
+    if (isValidAddressWithPort(fullMatch)) {
+      if (!map.has(addr)) {
+        map.set(addr, loc);
+      }
+    }
   }
+  // plainIpv6
   let plainIpv6Match;
   while ((plainIpv6Match = patterns.plainIpv6.exec(html)) !== null) {
-    const fullMatch = plainIpv6Match[0];
-    // 优化：用 isValidIPv6 验证所有捕获，移除特定 continue
+    let candidate = plainIpv6Match[0];
+    let addr = candidate;
+    let loc = null;
+    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1;
+    if (hashIndex !== -1) {
+      addr = candidate.substring(0, hashIndex).trim();
+      const rest = candidate.substring(hashIndex + 1).trim();
+      loc = rest.replace(/^#/, '').split('_')[0];
+    }
+    const fullMatch = addr;
     const cleanIp = fullMatch.replace(/:\d+$/, '');
     if (!isValidIPv6(cleanIp)) continue;
     const contextStart = Math.max(0, plainIpv6Match.index - 10);
@@ -327,40 +360,79 @@ function extractAddressesFromHTML(html) {
     if (context.includes('http://') || context.includes('https://')) {
       if (!fullMatch.startsWith('[')) {
         const withBrackets = `[${fullMatch.split(':')[0]}]:${fullMatch.split(':').slice(1).join(':')}`;
-        if (isValidAddressWithPort(withBrackets)) set.add(withBrackets);
+        if (isValidAddressWithPort(withBrackets)) {
+          if (!map.has(withBrackets)) {
+            map.set(withBrackets, loc);
+          }
+        }
       }
     }
-    if (isValidAddressWithPort(fullMatch)) set.add(fullMatch);
+    if (isValidAddressWithPort(fullMatch)) {
+      if (!map.has(addr)) {
+        map.set(addr, loc);
+      }
+    }
   }
-  // 关键词和属性提取（简化，仅当combined未捕获时补充）
+  // keyword
   let match;
   while ((match = patterns.keyword.exec(html)) !== null) {
-    const candidate = match[1].trim();
+    let candidate = match[1].trim();
     const rest = html.slice(match.index + match[0].length);
     const fullMatch = candidate + rest.split(/[\s<"'`]/)[0];
     let toCheck = fullMatch;
-    if (isValidIPv6(candidate.replace(/[\[\]]/g, '')) && !candidate.includes('[')) {
-      toCheck = `[${candidate}]`;
+    let addr = toCheck;
+    let loc = null;
+    const hashIndex = toCheck.search(/\s*#/) !== -1 ? toCheck.search(/\s*#/) : -1;
+    if (hashIndex !== -1) {
+      addr = toCheck.substring(0, hashIndex).trim();
+      const restLoc = toCheck.substring(hashIndex + 1).trim();
+      loc = restLoc.replace(/^#/, '').split('_')[0];
     }
-    if (isValidAddressWithPort(toCheck)) {
-      const parsed = parseAddressWithPort(toCheck);
+    if (isValidIPv6(addr.replace(/[\[\]]/g, '')) && !addr.includes('[')) {
+      addr = `[${addr}]`;
+    }
+    if (isValidAddressWithPort(addr)) {
+      const parsed = parseAddressWithPort(addr);
       if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-      set.add(toCheck);
+      if (!map.has(addr)) {
+        map.set(addr, loc);
+      }
     } else if (isValidAddressWithPort(candidate)) {
-      const parsed = parseAddressWithPort(candidate);
+      let addrCan = candidate;
+      let locCan = null;
+      const hashIndexCan = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1;
+      if (hashIndexCan !== -1) {
+        addrCan = candidate.substring(0, hashIndexCan).trim();
+        const restCan = candidate.substring(hashIndexCan + 1).trim();
+        locCan = restCan.replace(/^#/, '').split('_')[0];
+      }
+      const parsed = parseAddressWithPort(addrCan);
       if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-      set.add(candidate);
+      if (!map.has(addrCan)) {
+        map.set(addrCan, locCan);
+      }
     }
   }
+  // attr
   while ((match = patterns.attr.exec(html)) !== null) {
-    const candidate = match[1].trim();
-    if (isValidAddressWithPort(candidate)) {
-      const parsed = parseAddressWithPort(candidate);
+    let candidate = match[1].trim();
+    let addr = candidate;
+    let loc = null;
+    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1;
+    if (hashIndex !== -1) {
+      addr = candidate.substring(0, hashIndex).trim();
+      const rest = candidate.substring(hashIndex + 1).trim();
+      loc = rest.replace(/^#/, '').split('_')[0];
+    }
+    if (isValidAddressWithPort(addr)) {
+      const parsed = parseAddressWithPort(addr);
       if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
-      set.add(candidate);
+      if (!map.has(addr)) {
+        map.set(addr, loc);
+      }
     }
   }
-  return Array.from(set);
+  return Array.from(map).map(([address, location]) => ({ address, location }));
 }
 /* ====================== 优化黑名单过滤函数 ====================== */
 // 预处理黑名单：精确匹配用Set（O(1)查找），域名模式用Set（endsWith检查）
@@ -417,12 +489,19 @@ async function handleUpdate(env) {
   // 筛选出需要测试地理位置的地址
   const needLocationTest = [];
   const knownLocations = new Map();
+
   addressesWithLocation.forEach(item => {
-    const historyInfo = historyMap.get(item.address);
-    if (historyInfo && historyInfo.location && historyInfo.location !== "未知") {
-      knownLocations.set(item.address, historyInfo.location);
+    // 来源明确给了 #任意内容（包括 #SG6、#新加坡8、#www.example.com、#1）→ 直接信任
+    if (item.location !== null && item.location !== "") {
+      knownLocations.set(item.address, item.location);
     } else {
-      needLocationTest.push(item.address);
+      // 完全没备注的才看历史
+      const historyInfo = historyMap.get(item.address);
+      if (historyInfo?.location && historyInfo.location !== "未知" && historyInfo.location.trim() !== "") {
+        knownLocations.set(item.address, historyInfo.location.trim());
+      } else {
+        needLocationTest.push(item.address);
+      }
     }
   });
   // 筛选出需要测试延迟的地址
@@ -452,19 +531,16 @@ async function handleUpdate(env) {
   // 合并所有信息
   const finalAddresses = addressesWithLocation.map(item => {
     const address = item.address;
-    let location = item.location || "未知";
-    let latency = null;
-    // 如果在历史数据中找到位置信息
+    let location = item.location; // 默认用 item.location（可能是提供的 #*** 或 "未知"）
     if (knownLocations.has(address)) {
-      location = knownLocations.get(address);
-    }
-    // 否则使用新获取的位置信息
-    else {
+      location = knownLocations.get(address); // 如果是 history 的，会覆盖 "未知"；有备注时 known 就是备注，不变
+    } else {
       const index = needLocationTest.indexOf(address);
       if (index !== -1 && newLocations[index]) {
-        location = newLocations[index];
+        location = newLocations[index]; // 新测试的
       }
     }
+    let latency = null;
     // 如果在历史数据中找到延迟信息
     if (knownLatencies.has(address)) {
       latency = knownLatencies.get(address);
@@ -543,10 +619,10 @@ async function getRecentHistoryData(env, limit = 3) {
 /* ====================== 地址收集 —— 支持 IPv4、IPv6 和域名 ====================== */
 async function updateAllAddresses(env) {
   const urls = await getSources(env);
-  const uniqueAddressesSet = new Set();
   const results = [];
   const blacklistRaw = await getBlacklist(env);
   const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
+  const uniqueAddressesMap = new Map(); // Map<string, string | null> address => location
   for (let i = 0; i < urls.length; i += 3) {
     const batch = urls.slice(i, i + 3);
     const settled = await Promise.allSettled(batch.map(u => fetchURLWithTimeout(u)));
@@ -555,14 +631,14 @@ async function updateAllAddresses(env) {
       // 使用完整URL作为标识，避免同一域名不同路径被视为相同来源
       const name = url;
       if (res.status === "fulfilled") {
-        const addresses = extractAddressesFromHTML(res.value);
-        console.log(`URL ${url} extracted ${addresses.length} addresses:`, addresses);
-        addresses.forEach(addr => {
-          if (!isBlacklisted(addr, blacklistPreprocessed)) {
-            uniqueAddressesSet.add(addr);
+        const extracted = extractAddressesFromHTML(res.value);
+        console.log(`URL ${url} extracted ${extracted.length} addresses:`, extracted);
+        extracted.forEach(item => {
+          if (!isBlacklisted(item.address, blacklistPreprocessed) && !uniqueAddressesMap.has(item.address)) {
+            uniqueAddressesMap.set(item.address, item.location);
           }
         });
-        results.push({ name, status: "success", count: addresses.length });
+        results.push({ name, status: "success", count: extracted.length });
       } else {
         console.error(`Failed to fetch ${url}:`, res.reason);
         results.push({ name, status: "error", count: 0, error: res.reason.message || "Unknown" });
@@ -570,38 +646,40 @@ async function updateAllAddresses(env) {
     });
     if (i + 3 < urls.length) await new Promise(r => setTimeout(r, 300)); // 动态延迟优化
   }
-  const sortedAddresses = Array.from(uniqueAddressesSet).sort((a, b) => {
-    const parsedA = parseAddressWithPort(a);
-    const parsedB = parseAddressWithPort(b);
-    // 排序优先级: 域名 -> IPv4 -> IPv6
-    const priority = { 'domain': 0, 'ipv4': 1, 'ipv6': 2, 'unknown': 3 };
-    const priA = priority[parsedA.type];
-    const priB = priority[parsedB.type];
-    if (priA !== priB) return priA - priB;
-    // 同类型内排序
-    if (parsedA.type === 'ipv4' && parsedB.type === 'ipv4') {
-      const pa = parsedA.address.split(".").map(Number);
-      const pb = parsedB.address.split(".").map(Number);
-      for (let i = 0; i < 4; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
-      return parseInt(parsedA.port) - parseInt(parsedB.port);
-    }
-    if (parsedA.type === 'ipv6' && parsedB.type === 'ipv6') {
-      if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
-      return parseInt(parsedA.port) - parseInt(parsedB.port);
-    }
-    if (parsedA.type === 'domain' && parsedB.type === 'domain') {
-      if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
-      return parseInt(parsedA.port) - parseInt(parsedB.port);
-    }
-    // 通用排序
-    return a.localeCompare(b);
-  });
+  const sortedAddresses = Array.from(uniqueAddressesMap).map(([address, location]) => ({ address, location }))
+    .sort((a, b) => {
+      const parsedA = parseAddressWithPort(a.address);
+      const parsedB = parseAddressWithPort(b.address);
+      // 排序优先级: 域名 -> IPv4 -> IPv6
+      const priority = { 'domain': 0, 'ipv4': 1, 'ipv6': 2, 'unknown': 3 };
+      const priA = priority[parsedA.type];
+      const priB = priority[parsedB.type];
+      if (priA !== priB) return priA - priB;
+      // 同类型内排序
+      if (parsedA.type === 'ipv4' && parsedB.type === 'ipv4') {
+        const pa = parsedA.address.split(".").map(Number);
+        const pb = parsedB.address.split(".").map(Number);
+        for (let i = 0; i < 4; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+        return parseInt(parsedA.port) - parseInt(parsedB.port);
+      }
+      if (parsedA.type === 'ipv6' && parsedB.type === 'ipv6') {
+        if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
+        return parseInt(parsedA.port) - parseInt(parsedB.port);
+      }
+      if (parsedA.type === 'domain' && parsedB.type === 'domain') {
+        if (parsedA.address !== parsedB.address) return parsedA.address.localeCompare(parsedB.address);
+        return parseInt(parsedA.port) - parseInt(parsedB.port);
+      }
+      // 通用排序
+      return a.address.localeCompare(b.address);
+    });
+  const uniqueAddresses = sortedAddresses.map(item => item.address); // string[] 用于 count 和 latency
   // 初始化所有地址的位置为"未知"
-  const addressesWithLocation = sortedAddresses.map(addr => ({
-    address: addr,
-    location: "未知"
+  const addressesWithLocation = sortedAddresses.map(item => ({
+    address: item.address,
+    location: item.location ? item.location.trim() : null   // 推荐改成 null
   }));
-  return { uniqueAddresses: sortedAddresses, results, addressesWithLocation };
+  return { uniqueAddresses, results, addressesWithLocation };
 }
 // 增强地理位置获取，处理 IPv4、IPv6 和域名
 async function getLocationsForAddresses(addresses) {
@@ -719,18 +797,18 @@ async function getLocationsForAddresses(addresses) {
         if (!dohResponse.ok) throw new Error(`DoH 请求失败: ${dohResponse.status}`);
         const dohData = await dohResponse.json();
         if (dohData.Status !== 0 || !dohData.Answer) throw new Error('DoH 无有效响应');
-       
+      
         // 提取第一个A记录 (type=1) 的IP
         const ipRecord = dohData.Answer.find(ans => ans.type === 1);
         if (!ipRecord || !ipRecord.data) throw new Error('无IPv4记录');
         const ip = ipRecord.data;
-       
+      
         // Step 2: 用IP查询API
         const apiUrl = `https://api.ipapi.is/?q=${encodeURIComponent(ip)}`;
         const apiResponse = await fetch(apiUrl);
         if (!apiResponse.ok) throw new Error(`API 请求失败: ${apiResponse.status}`);
         const locationData = await apiResponse.json();
-       
+      
         // Step 3: 提取location.country_code
         const countryCode = locationData?.location?.country_code;
         if (countryCode) {
@@ -812,7 +890,6 @@ async function cleanupOldIPs(env) {
   const LIST_LIMIT = 100;
   let cursor = null;
   const now = Date.now();
- 
   // 【配置区】—— 建议你改成 2 天 + 至少保留 10 条 + 总大小不超过 1MB
   const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000; // 2天
   const MIN_KEEP_COUNT = 10; // 至少保留最新10条（无论多老）
@@ -1178,11 +1255,11 @@ async function serveHTML(env, request) {
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
-		.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
-		.admin-button:hover { background: #2563eb; }
-		.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 129px; overflow: hidden; }
-		.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 129px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
-		.admin-dropdown button:hover { background: #dc2626;}
+.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
+.admin-button:hover { background: #2563eb; }
+.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 129px; overflow: hidden; }
+.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 129px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+.admin-dropdown button:hover { background: #dc2626;}
         .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
@@ -1249,9 +1326,9 @@ async function serveHTML(env, request) {
             .ip-info { width: 100%; justify-content: space-between; }
             .action-buttons { width: 100%; justify-content: flex-end; }
             .modal-buttons { flex-direction: column; }
-			.admin-dropdown { margin-top: -156px !important; min-width: 122px; }
+.admin-dropdown { margin-top: -156px !important; min-width: 122px; }
             .admin-modal { padding: 20px; }
-			#ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
+#ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
         }
     </style>
 </head>
@@ -1279,11 +1356,11 @@ async function serveHTML(env, request) {
                     </svg>
                 </a>
             </div>
-			${showAdminButton ? `
+${showAdminButton ? `
             <div class="admin-panel">
                 <button class="admin-button" onclick="toggleAdminDropdown()">👤管理员🔽</button>
                 <div class="admin-dropdown" id="admin-dropdown">
-                    <button onclick="handleLogout()">👤 登  出 ⏏️</button>
+                    <button onclick="handleLogout()">👤 登 出 ⏏️</button>
                 </div>
             </div>
             ` : ''}
