@@ -250,7 +250,7 @@ function parseFormattedAddress(formatted) {
 }
 /* ====================== 白名单域名（只保留这些结尾的域名） ====================== */
 const WHITELIST_DOMAINS = [
-"xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org","fun",
+"xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org","fun","fan",
 "icu", "mn", "in", "sb", "is", "org", "ir", "app","ltd","buzz",
 "ws", "net", "pw", "one", "top", "lt", "cylex.hu","vip","shop",
 "cn", "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
