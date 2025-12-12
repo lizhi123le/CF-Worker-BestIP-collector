@@ -294,8 +294,9 @@ function extractAddressesFromHTML(html) {
   const map = new Map(); // Map<string, string | null> address => location
   // 预编译正则 (updated to support Chinese in remarks with Unicode 'gu' flag)
   const patterns = {
-    ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+    ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     plainIpv6: /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+	domainWithHash: /[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
     attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
     backup: /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g,
@@ -368,6 +369,26 @@ function extractAddressesFromHTML(html) {
       }
     }
     if (isValidAddressWithPort(fullMatch)) {
+      if (!map.has(addr)) {
+        map.set(addr, loc);
+      }
+    }
+  }
+  // 新增：处理纯域名#备注 的情况
+  let domainHashMatch;
+  while ((domainHashMatch = patterns.domainWithHash.exec(html)) !== null) {
+    let candidate = domainHashMatch[0];
+    let addr = candidate;
+    let loc = null;
+    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : candidate.search(/#/);
+    if (hashIndex !== -1) {
+      addr = candidate.substring(0, hashIndex).trim();
+      const rest = candidate.substring(hashIndex + 1).trim();
+      loc = rest.replace(/^#/, '').split('_')[0];
+    }
+    if (isValidAddressWithPort(addr)) {
+      const parsed = parseAddressWithPort(addr);
+      if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
       if (!map.has(addr)) {
         map.set(addr, loc);
       }
@@ -489,17 +510,24 @@ async function handleUpdate(env) {
   // 筛选出需要测试地理位置的地址
   const needLocationTest = [];
   const knownLocations = new Map();
-
   addressesWithLocation.forEach(item => {
-    // 来源明确给了 #任意内容（包括 #SG6、#新加坡8、#www.example.com、#1）→ 直接信任
-    if (item.location !== null && item.location !== "") {
-      knownLocations.set(item.address, item.location);
-    } else {
-      // 完全没备注的才看历史
-      const historyInfo = historyMap.get(item.address);
-      if (historyInfo?.location && historyInfo.location !== "未知" && historyInfo.location.trim() !== "") {
-        knownLocations.set(item.address, historyInfo.location.trim());
-      } else {
+    const srcLoc = item.location?.trim();
+    const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？"]);
+    if (srcLoc && !useless.has(srcLoc) && srcLoc.toLowerCase() !== "unknown") {
+      knownLocations.set(item.address, srcLoc);
+    }
+    else {
+      const h = historyMap.get(item.address);
+      if (h?.location) {
+        const loc = h.location.trim();
+        if (loc && !useless.has(loc) && loc.toLowerCase() !== "unknown") {
+          knownLocations.set(item.address, loc);
+        }
+        else {
+          needLocationTest.push(item.address);
+        }
+      }
+      else {
         needLocationTest.push(item.address);
       }
     }
@@ -777,10 +805,10 @@ async function getLocationsForAddresses(addresses) {
         } catch (se) {
           console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
         }
-        if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 1500));
+        if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 1100));
       }
     }
-    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1500));
+    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1000));
   }
   // 增强：处理域名地理位置，先用DoH解析IP，然后用 https://api.ipapi.is/?q=IP 查询
   const domainBatchSize = 4; // 小批量，避免限速
@@ -820,7 +848,7 @@ async function getLocationsForAddresses(addresses) {
         // 失败：保持初始回退域名
       }
     }));
-    if (i + domainBatchSize < domainAddresses.length) await new Promise(r => setTimeout(r, 1200)); // 批次间隔1秒
+    if (i + domainBatchSize < domainAddresses.length) await new Promise(r => setTimeout(r, 336)); // 批次间隔1秒
   }
   return locs;
 }
@@ -1070,7 +1098,7 @@ async function getIPsWithFallback(env, limit = null) {
 const blacklistRaw = await getBlacklist(env);
 const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
 // 获取最近10条历史记录（足够补足）
-const historicalData = await getRecentHistoryData(env, 60);
+const historicalData = await getRecentHistoryData(env, 90);
 if (historicalData.length === 0) {
   return {
     ips: [],
@@ -1204,6 +1232,13 @@ async function handleLogout(req, env) {
 async function handleAdminStatus(req, env) {
   const status = await getAdminStatus(env, req);
   return jsonResponse(status);
+}
+async function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }
 /* ====================== 页面与接口 ====================== */
 async function serveHTML(env, request) {
@@ -1402,7 +1437,7 @@ ${showAdminButton ? `
                   // 确保 address 存在，使用安全默认值
                   const address = item?.address || 'unknown';
                   // 优化：用 btoa 作为 safeId，避免特殊字符
-                  const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+                  const safeId = simpleHash(address);
                   let typeBadge = '';
                   // 添加类型角标
                   const parsed = parseAddressWithPort(address);
@@ -1526,6 +1561,13 @@ ${showAdminButton ? `
         </div>
     </div>
     <script>
+        function simpleHash(str) {
+          let hash = 0;
+          for (let i = 0; i < str.length; i++) {
+            hash = (hash * 31 + str.charCodeAt(i)) | 0;
+          }
+          return (hash >>> 0).toString(36);
+        }
         // 管理员相关
         function toggleAdminDropdown() {
             const dropdown = document.getElementById('admin-dropdown');
@@ -2081,7 +2123,7 @@ ${showAdminButton ? `
                     ipList.innerHTML = displayIPs.map(function(item) {
                         // 确保 address 存在
                         const address = item?.address || 'unknown';
-                        const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+                        const safeId = simpleHash(address);
                         const location = item?.location || '未知';
                         const latency = item?.latency;
                         // 添加类型角标
@@ -2126,7 +2168,7 @@ ${showAdminButton ? `
                         if (address) {
                             if (latency) {
                                 speedResults[address] = { latency: latency, success: true };
-                                const safeId = btoa(address).replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+                                const safeId = simpleHash(address);
                                 const el = document.getElementById('speed-' + safeId);
                                 if (el) {
                                     const cls = latency < 200 ? 'speed-fast' : latency < 500 ? 'speed-medium' : 'speed-slow';
