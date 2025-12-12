@@ -250,9 +250,9 @@ function parseFormattedAddress(formatted) {
 }
 /* ====================== 白名单域名（只保留这些结尾的域名） ====================== */
 const WHITELIST_DOMAINS = [
-"xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org",
-"icu", "mn", "in", "sb", "is", "org", "ir", "app",
-"ws", "net", "pw", "one", "top", "lt", "cylex.hu",
+"xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org","fun",
+"icu", "mn", "in", "sb", "is", "org", "ir", "app","ltd","buzz",
+"ws", "net", "pw", "one", "top", "lt", "cylex.hu","vip","shop",
 "cn", "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
 "it", "es", "ru", "se", "no", "fi", "dk", "pl", "cz", "gr",
 "be", "nl", "ie", "nz", "mx", "ar", "cl", "tr", "sa", "ae",
@@ -294,8 +294,8 @@ function extractAddressesFromHTML(html) {
   const map = new Map(); // Map<string, string | null> address => location
   // 预编译正则 (updated to support Chinese in remarks with Unicode 'gu' flag)
   const patterns = {
-    ipv6WithBrackets: /\[([0-9a-fA-F:]{2,39})\](?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
-    plainIpv6: /(?<![\da-fA-F:])([0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){0,6}::[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{1,4}){0,6})(?![\da-fA-F:])(?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+    ipv6WithBrackets: /\[([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7}(?:::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7})?)\](?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+    plainIpv6: /(?<![\w\]])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}::(?::[0-9a-fA-F]{1,4}){0,6})(?![\w:\/])(?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
 	domainWithHash: /[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
     attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
@@ -325,19 +325,23 @@ function extractAddressesFromHTML(html) {
   // ipv6WithBrackets
   let ipv6Match;
   while ((ipv6Match = patterns.ipv6WithBrackets.exec(html)) !== null) {
-    let candidate = ipv6Match[0];
-    let addr = candidate;
+    const fullMatch = ipv6Match[0];           // 例如: [2606:4700::1234]:8443#SG
+    const ipInside = ipv6Match[1];            // 例如: 2606:4700::1234
+    const remarkPart = ipv6Match[2] || '';    // 例如:  #SG_123ms
+    // 提取端口（如果有）
+    const portMatch = fullMatch.match(/]:(\d{1,5})/);
+    const portStr = portMatch ? ':' + portMatch[1] : '';
+    // 提取位置备注
     let loc = null;
-    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1;
-    if (hashIndex !== -1) {
-      addr = candidate.substring(0, hashIndex).trim();
-      const rest = candidate.substring(hashIndex + 1).trim();
-      loc = rest.replace(/^#/, '').split('_')[0];
+    if (remarkPart) {
+      loc = remarkPart.trim().replace(/^#/, '').split('_')[0].trim();
     }
-    const fullMatch = addr;
-    if (isValidAddressWithPort(fullMatch)) {
-      if (!map.has(addr)) {
-        map.set(addr, loc);
+    // 标准格式：[ipv6]:port
+    const standardAddr = `[${ipInside}]${portStr}`;
+    // 严格校验
+    if (isValidIPv6(ipInside)) {
+      if (!map.has(standardAddr)) {
+        map.set(standardAddr, loc);
       }
     }
   }
@@ -347,31 +351,27 @@ function extractAddressesFromHTML(html) {
     let candidate = plainIpv6Match[0];
     let addr = candidate;
     let loc = null;
-    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1;
-    if (hashIndex !== -1) {
-      addr = candidate.substring(0, hashIndex).trim();
-      const rest = candidate.substring(hashIndex + 1).trim();
-      loc = rest.replace(/^#/, '').split('_')[0];
+    const hashIdx = candidate.search(/\s*#|#/);
+    if (hashIdx !== -1) {
+      addr = candidate.substring(0, hashIdx).trim();
+      const rest = candidate.substring(hashIdx).trim();
+      loc = rest.replace(/^#/, '').split('_')[0].trim();
     }
-    const fullMatch = addr;
-    const cleanIp = fullMatch.replace(/:\d+$/, '');
+    const portMatch = addr.match(/:(\d{1,5})$/);
+    const portStr = portMatch ? ':' + portMatch[1] : '';
+    const cleanIp = addr.replace(/:\d+$/, '').replace(/[\[\]]/g, ''); 
     if (!isValidIPv6(cleanIp)) continue;
-    const contextStart = Math.max(0, plainIpv6Match.index - 10);
-    const context = html.substring(contextStart, plainIpv6Match.index + fullMatch.length + 10);
+    const standardAddr = `[${cleanIp}]${portStr}`;
+    const contextStart = Math.max(0, plainIpv6Match.index - 15);
+    const contextEnd   = plainIpv6Match.index + plainIpv6Match[0].length + 15;
+    const context = html.substring(contextStart, contextEnd);
     if (context.includes('http://') || context.includes('https://')) {
-      if (!fullMatch.startsWith('[')) {
-        const withBrackets = `[${fullMatch.split(':')[0]}]:${fullMatch.split(':').slice(1).join(':')}`;
-        if (isValidAddressWithPort(withBrackets)) {
-          if (!map.has(withBrackets)) {
-            map.set(withBrackets, loc);
-          }
-        }
+      if (!map.has(standardAddr)) {
+        map.set(standardAddr, loc);
       }
     }
-    if (isValidAddressWithPort(fullMatch)) {
-      if (!map.has(addr)) {
-        map.set(addr, loc);
-      }
+    if (!map.has(standardAddr)) {
+      map.set(standardAddr, loc);
     }
   }
   // 新增：处理纯域名#备注 的情况
@@ -1274,7 +1274,26 @@ async function serveHTML(env, request) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🌐 Cloudflare 优质 IP/域名 收集器</title>
+    <title>Cloudflare 优质 IP/域名 收集器</title>
+	<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>🌐</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>🌐</text></svg>">
+    <link rel="shortcut icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>🌐</text></svg>" type="image/svg+xml">
+	<!-- iOS 添加到主屏幕（完美圆角大图标） -->
+    <link rel="apple-touch-icon" sizes="180x180" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
+    <link rel="apple-touch-icon-precomposed" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
+    <!-- Android Chrome + PWA（添加到主屏幕） -->
+    <link rel="manifest" href="data:application/manifest+json,{
+      %22name%22:%22Cloudflare IP/域名 收集器%22,
+      %22short_name%22:%22CF 优选%22,
+      %22icons%22:[{%22src%22:%22data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>%22,%22sizes%22:%22192x192%22},{%22src%22:%22data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>%22,%22sizes%22:%22512x512%22}],
+      %22start_url%22:%22.%22,
+      %22display%22:%22standalone%22,
+      %22theme_color%22:%22#3b82f6%22
+    }">
+    <!-- Windows 磁贴 -->
+    <meta name="msapplication-TileImage" content="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
+    <meta name="msapplication-TileColor" content="#3b82f6">
+    <meta name="theme-color" content="#3b82f6">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; background: #f8fafc; color: #334155; min-height: 100vh; padding: 20px; }
@@ -1371,7 +1390,18 @@ async function serveHTML(env, request) {
     <div class="container">
         <div class="header">
             <div class="header-content">
-                <h1>🌐 Cloudflare IP/域名 收集器</h1>
+                <h1 style="display:inline-block; animation: breathe 4s ease-in-out infinite;">
+				  <span style="display:inline-block; animation: pulse 4s ease-in-out infinite;">🌐</span> Cloudflare IP/域名 收集器
+				</h1>
+				<style>
+				@keyframes breathe {
+				  0%,100% { opacity: 0.7; }
+				  50%     { opacity: 1; }
+				@keyframes pulse {
+				  0%,100% { transform: scale(1); }
+				  50%     { transform: scale(1.18); }
+				}
+				</style>
                 <p>网络加速专家 | 智能测速与优化</p>
             </div>
             <div class="social-links">
