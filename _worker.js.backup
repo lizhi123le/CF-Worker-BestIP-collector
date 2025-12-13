@@ -922,14 +922,11 @@ async function cleanupOldIPs(env) {
   const LIST_LIMIT = 1000;
   let cursor = null;
   const now = Date.now();
-  
   // 配置区 —— 建议这样最安全
   const MAX_AGE_MS       = 2 * 24 * 60 * 60 * 1000;   // 最多保留 7 天
   const MIN_KEEP_COUNT   = 10;                      // 强制保留最新 30 条
   const MAX_TOTAL_SIZE   = 1 * 1024 * 1024;         // 总大小不超过 1MB（留足余量）
-
   const items = [];
-
   // 第一步：收集所有历史 key
   do {
     const list = await env.IP_STORAGE.list({
@@ -940,12 +937,10 @@ async function cleanupOldIPs(env) {
     items.push(...list.keys);
     cursor = list.cursor;
   } while (cursor);
-
   if (items.length <= MIN_KEEP_COUNT) {
     console.log("[清理] 记录太少，无需清理");
     return;
   }
-
   // 第二步：真正读取每个 value 的字节长度（这是唯一可靠的方法）
   const details = [];
   for (const key of items) {
@@ -961,13 +956,10 @@ async function cleanupOldIPs(env) {
       console.warn(`读取 ${key.name} 失败，跳过:`, e);
     }
   }
-
   // 按时间倒序（新→旧）
   details.sort((a, b) => b.date - a.date);
-
   const toDelete = new Set();
   let totalSize = details.reduce((sum, i) => sum + i.size, 0);
-
   // 阶段1：删除超龄的（但保留最新 MIN_KEEP_COUNT 条）
   for (let i = MIN_KEEP_COUNT; i < details.length; i++) {
     if (details[i].date.getTime() < now - MAX_AGE_MS) {
@@ -1329,11 +1321,11 @@ async function serveHTML(env, request) {
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
-.admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
-.admin-button:hover { background: #2563eb; }
-.admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 129px; overflow: hidden; }
-.admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 129px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
-.admin-dropdown button:hover { background: #dc2626;}
+        .admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
+        .admin-button:hover { background: #2563eb; }
+        .admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 129px; overflow: hidden; }
+        .admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 129px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+        .admin-dropdown button:hover { background: #dc2626;}
         .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
@@ -1400,9 +1392,9 @@ async function serveHTML(env, request) {
             .ip-info { width: 100%; justify-content: space-between; }
             .action-buttons { width: 100%; justify-content: flex-end; }
             .modal-buttons { flex-direction: column; }
-.admin-dropdown { margin-top: -156px !important; min-width: 122px; }
+            .admin-dropdown { margin-top: -156px !important; min-width: 122px; }
             .admin-modal { padding: 20px; }
-#ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
+            #ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
         }
     </style>
 </head>
@@ -1441,7 +1433,7 @@ async function serveHTML(env, request) {
                     </svg>
                 </a>
             </div>
-${showAdminButton ? `
+            ${showAdminButton ? `
             <div class="admin-panel">
                 <button class="admin-button" onclick="toggleAdminDropdown()">👤管理员🔽</button>
                 <div class="admin-dropdown" id="admin-dropdown">
@@ -1670,64 +1662,50 @@ ${showAdminButton ? `
         // 解析地址类型
         function parseAddressWithPort(address) {
           const pure = address.split('#')[0].trim();
-          const hasValidators =
-            typeof isValidIPv6 === 'function' &&
-            typeof isValidIPv4 === 'function' &&
-            typeof isValidDomain === 'function' &&
-            typeof isValidPort === 'function';
+          const isIPv4Lite = v => {
+            const octets = v.split('.');
+            if (octets.length !== 4) return false;
+            return octets.every(oct => {
+              const num = Number(oct);
+              return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
+            });
+          };
+          const isIPv6Lite = v => v.includes(':');
           let addrPart, portPart = "443";
           // [IPv6]:port
           if (pure.startsWith('[') && pure.includes(']:')) {
             const end = pure.indexOf(']');
             addrPart = pure.substring(1, end);
             portPart = pure.substring(end + 2) || "443";
-            if (hasValidators && !isValidIPv6(addrPart)) {
-              return { address: addrPart, port: "443", type: 'unknown' };
-            }
             return { address: addrPart, port: portPart, type: 'ipv6' };
           }
           // [IPv6]
           if (pure.startsWith('[') && pure.endsWith(']')) {
             addrPart = pure.slice(1, -1);
-            if (hasValidators && !isValidIPv6(addrPart)) {
-              return { address: addrPart, port: "443", type: 'unknown' };
-            }
             return { address: addrPart, port: "443", type: 'ipv6' };
           }
           const parts = pure.split(':');
           // IPv6 无括号
           if (parts.length > 2 && !pure.includes('[')) {
-            if (hasValidators && !isValidIPv6(pure)) {
-              return { address: pure, port: "443", type: 'unknown' };
-            }
             return { address: pure, port: "443", type: 'ipv6' };
           }
           // 无端口
           if (parts.length === 1) {
             addrPart = parts[0];
-            let type = 'domain';
-            if (hasValidators) {
-              type =
-                isValidIPv4(addrPart) ? 'ipv4' :
-                isValidIPv6(addrPart) ? 'ipv6' :
-                isValidDomain(addrPart) ? 'domain' : 'unknown';
-            }
+            let type;
+            if (isIPv4Lite(addrPart)) type = 'ipv4';
+            else if (isIPv6Lite(addrPart)) type = 'ipv6';
+            else type = 'domain';
             return { address: addrPart, port: "443", type };
           }
           // addr:port
           if (parts.length === 2) {
             addrPart = parts[0];
-            portPart = parts[1];
-            if (hasValidators && !isValidPort(portPart)) {
-              return { address: addrPart, port: "443", type: 'unknown' };
-            }
-            let type = 'domain';
-            if (hasValidators) {
-              type =
-                isValidIPv4(addrPart) ? 'ipv4' :
-                isValidIPv6(addrPart) ? 'ipv6' :
-                isValidDomain(addrPart) ? 'domain' : 'unknown';
-            }
+            portPart = parts[1] || "443";
+            let type;
+            if (isIPv4Lite(addrPart)) type = 'ipv4';
+            else if (isIPv6Lite(addrPart)) type = 'ipv6';
+            else type = 'domain';
             return { address: addrPart, port: portPart, type };
           }
           return { address: pure, port: "443", type: 'unknown' };
