@@ -1320,6 +1320,8 @@ async function serveHTML(env, request) {
         .social-link.youtube:hover { background: #fef2f2; border-color: #fecaca; }
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
+		.social-link.telegram { display: inline-flex; align-items: center; justify-content: center; }
+		.social-link.telegram svg { display: block; transform: translate(-2.6px, -3.2px); }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
         .admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
         .admin-button:hover { background: #2563eb; }
