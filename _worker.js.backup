@@ -1667,67 +1667,70 @@ ${showAdminButton ? `
                 alert('登出失败: ' + error.message);
             }
         }
-        // 原有JS代码...
         // 解析地址类型
         function parseAddressWithPort(address) {
+          const pure = address.split('#')[0].trim();
+          const hasValidators =
+            typeof isValidIPv6 === 'function' &&
+            typeof isValidIPv4 === 'function' &&
+            typeof isValidDomain === 'function' &&
+            typeof isValidPort === 'function';
           let addrPart, portPart = "443";
-          // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
-          if (address.startsWith('[') && address.includes(']:')) {
-            const ipv6End = address.indexOf(']');
-            addrPart = address.substring(1, ipv6End);
-            portPart = address.substring(ipv6End + 2) || "443";
+          // [IPv6]:port
+          if (pure.startsWith('[') && pure.includes(']:')) {
+            const end = pure.indexOf(']');
+            addrPart = pure.substring(1, end);
+            portPart = pure.substring(end + 2) || "443";
+            if (hasValidators && !isValidIPv6(addrPart)) {
+              return { address: addrPart, port: "443", type: 'unknown' };
+            }
             return { address: addrPart, port: portPart, type: 'ipv6' };
           }
-          // 处理常规地址
-          const parts = address.split(':');
-          // IPv6 地址没有端口 (没有方括号)
-          if (parts.length > 2 && !address.includes('[')) {
-            return { address: address, port: "443", type: 'ipv6' };
+          // [IPv6]
+          if (pure.startsWith('[') && pure.endsWith(']')) {
+            addrPart = pure.slice(1, -1);
+            if (hasValidators && !isValidIPv6(addrPart)) {
+              return { address: addrPart, port: "443", type: 'unknown' };
+            }
+            return { address: addrPart, port: "443", type: 'ipv6' };
           }
-          // IPv4 或域名
+          const parts = pure.split(':');
+          // IPv6 无括号
+          if (parts.length > 2 && !pure.includes('[')) {
+            if (hasValidators && !isValidIPv6(pure)) {
+              return { address: pure, port: "443", type: 'unknown' };
+            }
+            return { address: pure, port: "443", type: 'ipv6' };
+          }
+          // 无端口
           if (parts.length === 1) {
             addrPart = parts[0];
-            // 检查是否为 IPv4
-            const octets = addrPart.split('.');
-            if (octets.length === 4) {
-              const isValid = octets.every(oct => {
-                const num = parseInt(oct, 10);
-                return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
-              });
-              if (isValid) {
-                return { address: addrPart, port: "443", type: 'ipv4' };
-              }
+            let type = 'domain';
+            if (hasValidators) {
+              type =
+                isValidIPv4(addrPart) ? 'ipv4' :
+                isValidIPv6(addrPart) ? 'ipv6' :
+                isValidDomain(addrPart) ? 'domain' : 'unknown';
             }
-            // 检查是否为 IPv6
-            if (/^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$/.test(addrPart)) {
-              return { address: addrPart, port: "443", type: 'ipv6' };
-            }
-            // 否则假设为域名
-            return { address: addrPart, port: "443", type: 'domain' };
+            return { address: addrPart, port: "443", type };
           }
-          // 域名:port 或 IPv4:port
+          // addr:port
           if (parts.length === 2) {
             addrPart = parts[0];
             portPart = parts[1];
-            // 检查是否为 IPv4
-            const octets = addrPart.split('.');
-            if (octets.length === 4) {
-              const isValid = octets.every(oct => {
-                const num = parseInt(oct, 10);
-                return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
-              });
-              if (isValid) {
-                return { address: addrPart, port: portPart, type: 'ipv4' };
-              }
+            if (hasValidators && !isValidPort(portPart)) {
+              return { address: addrPart, port: "443", type: 'unknown' };
             }
-            // 检查是否为 IPv6
-            if (/^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$/.test(addrPart)) {
-              return { address: addrPart, port: portPart, type: 'ipv6' };
+            let type = 'domain';
+            if (hasValidators) {
+              type =
+                isValidIPv4(addrPart) ? 'ipv4' :
+                isValidIPv6(addrPart) ? 'ipv6' :
+                isValidDomain(addrPart) ? 'domain' : 'unknown';
             }
-            // 否则假设为域名
-            return { address: addrPart, port: portPart, type: 'domain' };
+            return { address: addrPart, port: portPart, type };
           }
-          return { address: address, port: "443", type: 'unknown' };
+          return { address: pure, port: "443", type: 'unknown' };
         }
         // 格式化地址输出
         function formatAddressOutput(address, location, latency) {
