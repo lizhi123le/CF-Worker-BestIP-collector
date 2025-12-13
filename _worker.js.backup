@@ -163,6 +163,10 @@ function parseAddressWithPort(address) {
     portPart = address.substring(ipv6End + 2) || "443";
     if (!isValidIPv6(addrPart)) return { address: address, port: "443", type: 'unknown' };
     return { address: addrPart, port: portPart, type: 'ipv6' };
+  } else if (address.startsWith('[') && address.endsWith(']')) {  // 新增：处理 [ipv6] 无端口的情况
+    addrPart = address.substring(1, address.length - 1);
+    if (!isValidIPv6(addrPart)) return { address: address, port: "443", type: 'unknown' };
+    return { address: addrPart, port: "443", type: 'ipv6' };
   }
   // 处理常规地址
   const parts = address.split(':');
@@ -171,7 +175,7 @@ function parseAddressWithPort(address) {
     if (!isValidIPv6(address)) return { address: address, port: "443", type: 'unknown' };
     return { address: address, port: "443", type: 'ipv6' };
   }
-  // IPv4 或域名
+  // 单纯域名或IPv4/IPv6无端口
   if (parts.length === 1) {
     addrPart = parts[0];
     const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
@@ -915,63 +919,79 @@ async function batchTestLatency(addresses, concurrency = 4) {
 }
 /* ====================== 清理旧历史数据 ====================== */
 async function cleanupOldIPs(env) {
-  const LIST_LIMIT = 100;
+  const LIST_LIMIT = 1000;
   let cursor = null;
   const now = Date.now();
-  // 【配置区】—— 建议你改成 2 天 + 至少保留 10 条 + 总大小不超过 1MB
-  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000; // 2天
-  const MIN_KEEP_COUNT = 10; // 至少保留最新10条（无论多老）
-  const MAX_TOTAL_SIZE = 1_000_000; // 1MB
-  const items = []; // { name, date, size }
-  // Step 1: 收集所有 key + size（尽量不读 value，节省费用）
+  
+  // 配置区 —— 建议这样最安全
+  const MAX_AGE_MS       = 2 * 24 * 60 * 60 * 1000;   // 最多保留 7 天
+  const MIN_KEEP_COUNT   = 10;                      // 强制保留最新 30 条
+  const MAX_TOTAL_SIZE   = 1 * 1024 * 1024;         // 总大小不超过 1MB（留足余量）
+
+  const items = [];
+
+  // 第一步：收集所有历史 key
   do {
     const list = await env.IP_STORAGE.list({
       prefix: "cloudflare_ips_",
       limit: LIST_LIMIT,
       cursor
     });
-    const metaPromises = list.keys.map(async (k) => {
-      // 使用 getWithMetadata 可以避免读大 value
-      const { metadata, size } = await env.IP_STORAGE.getWithMetadata(k.name, { type: "text" });
-      const date = parseTimestampKey(k.name);
-      if (!date) return null;
-      // 如果你之前没存 metadata，这里 size 就是 value 的字节数
-      return { name: k.name, date, size: size ?? 0 };
-    });
-    const batch = (await Promise.all(metaPromises)).filter(Boolean);
-    items.push(...batch);
+    items.push(...list.keys);
     cursor = list.cursor;
   } while (cursor);
+
   if (items.length <= MIN_KEEP_COUNT) {
-    console.log("少于最小保留数量，无需清理");
+    console.log("[清理] 记录太少，无需清理");
     return;
   }
-  // 按时间降序（新 → 旧）
-  items.sort((a, b) => b.date - a.date);
+
+  // 第二步：真正读取每个 value 的字节长度（这是唯一可靠的方法）
+  const details = [];
+  for (const key of items) {
+    try {
+      const value = await env.IP_STORAGE.get(key.name, { type: "text" });
+      if (value === null) continue;
+      const size = new TextEncoder().encode(value).length; // 精确字节数
+      const date = parseTimestampKey(key.name);
+      if (date) {
+        details.push({ name: key.name, date, size });
+      }
+    } catch (e) {
+      console.warn(`读取 ${key.name} 失败，跳过:`, e);
+    }
+  }
+
+  // 按时间倒序（新→旧）
+  details.sort((a, b) => b.date - a.date);
+
   const toDelete = new Set();
-  let currentSize = items.reduce((s, i) => s + i.size, 0);
-  // Step 2: 先删除“超龄且不在强制保留区”的记录
-  for (let i = MIN_KEEP_COUNT; i < items.length; i++) {
-    if (items[i].date.getTime() < now - MAX_AGE_MS) {
-      toDelete.add(items[i].name);
-      currentSize -= items[i].size;
+  let totalSize = details.reduce((sum, i) => sum + i.size, 0);
+
+  // 阶段1：删除超龄的（但保留最新 MIN_KEEP_COUNT 条）
+  for (let i = MIN_KEEP_COUNT; i < details.length; i++) {
+    if (details[i].date.getTime() < now - MAX_AGE_MS) {
+      toDelete.add(details[i].name);
+      totalSize -= details[i].size;
     }
   }
-  // Step 3: 如果总大小还超标，继续删最旧的（但绝不删前 MIN_KEEP_COUNT 条）
-  for (let i = items.length - 1; i >= MIN_KEEP_COUNT; i--) {
-    if (currentSize <= MAX_TOTAL_SIZE) break;
-    if (!toDelete.has(items[i].name)) {
-      toDelete.add(items[i].name);
-      currentSize -= items[i].size;
+
+  // 阶段2：如果还超总大小，继续删最旧的（绝不删前 MIN_KEEP_COUNT 条）
+  for (let i = details.length - 1; i >= MIN_KEEP_COUNT; i--) {
+    if (totalSize <= MAX_TOTAL_SIZE) break;
+    if (!toDelete.has(details[i].name)) {
+      toDelete.add(details[i].name);
+      totalSize -= details[i].size;
     }
   }
+
   if (toDelete.size > 0) {
-    console.log(`[清理] 将删除 ${toDelete.size} 条历史记录（超龄或超大小）`);
-    await Promise.all(
-      Array.from(toDelete).map(name => env.IP_STORAGE.delete(name))
-    );
+    console.log(`[清理] 即将删除 ${toDelete.size} 条历史记录，释放约 ${Math.round((details.reduce((s, i) => s + i.size, 0) - totalSize) / 1024)} KB`);
+    // 批量删除（KV 支持一次性最多 10,000 个，够用了）
+    await Promise.all(Array.from(toDelete).map(name => env.IP_STORAGE.delete(name)));
+    console.log("[清理] 完成");
   } else {
-    console.log("[清理] 无需删除");
+    console.log("[清理] 当前正常，无需删除");
   }
 }
 /* ====================== 来源管理 ====================== */
@@ -1217,7 +1237,7 @@ async function handleLogin(req, env) {
   if (inputHash !== storedHash) return jsonResponse({ error: '密码错误' }, 401);
   const now = Date.now();
   const token = btoa(now.toString());
-  const expires = new Date(now + 24 * 60 * 60 * 1000).toUTCString();
+  const expires = new Date(now + 1 * 60 * 60 * 1000).toUTCString();
   const headers = new Headers();
   headers.append('Set-Cookie', `admin_session=${token}=${token}; Path=/; Expires=${expires}; HttpOnly; Secure; SameSite=Strict`);
   headers.append('Content-Type', 'application/json');
@@ -1469,28 +1489,22 @@ ${showAdminButton ? `
                   // 优化：用 btoa 作为 safeId，避免特殊字符
                   const safeId = simpleHash(address);
                   let typeBadge = '';
-                  // 添加类型角标
-                  const parsed = parseAddressWithPort(address);
-                  if (parsed.type === 'ipv6') {
-                    typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
-                  } else if (parsed.type === 'ipv4') {
-                    typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
-                  } else if (parsed.type === 'domain') {
-                    typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
-                  }
-                  // 格式化显示地址 - 只在端口不是443时显示端口
-                  let displayAddress = parsed.address;
-                  if (parsed.port !== "443") {
-                    if (parsed.type === 'ipv6') {
-                      displayAddress = `[${displayAddress}]:${parsed.port}`;
-                    } else {
-                      displayAddress = `${displayAddress}:${parsed.port}`;
-                    }
-                  } else {
-                    if (parsed.type === 'ipv6' && !address.startsWith('[')) {
-                      displayAddress = `[${displayAddress}]`;
-                    }
-                  }
+				  const parsed = parseAddressWithPort(address);
+				  if (parsed.type === 'ipv6') {
+					typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
+				  } else if (parsed.type === 'ipv4') {
+					typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
+				  } else if (parsed.type === 'domain') {
+					typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
+				  }
+				  // 格式化显示地址 - 只在端口不是443时显示端口
+				  let displayAddress = parsed.address;
+				  if (parsed.type === 'ipv6') {
+					displayAddress = '[' + displayAddress + ']'; 
+				  }
+				  if (parsed.port !== "443") {
+					displayAddress += ':' + parsed.port;
+				  }
                   return `
                     <div class="ip-item" data-ip="${address}">
                         <div class="ip-info">
@@ -2157,28 +2171,23 @@ ${showAdminButton ? `
                         const location = item?.location || '未知';
                         const latency = item?.latency;
                         // 添加类型角标
-                        const parsed = parseAddressWithPort(address);
                         let typeBadge = '';
-                        if (parsed.type === 'ipv6') {
-                          typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
-                        } else if (parsed.type === 'ipv4') {
-                          typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
-                        } else if (parsed.type === 'domain') {
-                          typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
-                        }
-                        // 格式化显示地址 - 只在端口不是443时显示端口
-                        let displayAddress = parsed.address;
-                        if (parsed.port !== "443") {
-                          if (parsed.type === 'ipv6') {
-                            displayAddress = '[' + displayAddress + ']:' + parsed.port;
-                          } else {
-                            displayAddress = displayAddress + ':' + parsed.port;
-                          }
-                        } else {
-                          if (parsed.type === 'ipv6' && !address.startsWith('[')) {
-                            displayAddress = '[' + displayAddress + ']';
-                          }
-                        }
+						const parsed = parseAddressWithPort(address);
+						if (parsed.type === 'ipv6') {
+							typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
+						} else if (parsed.type === 'ipv4') {
+							typeBadge = '<span style="background:#3b82f6; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv4</span>';
+						} else if (parsed.type === 'domain') {
+							typeBadge = '<span style="background:#f59e0b; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">域名</span>';
+						}
+						// 格式化显示地址 - 只在端口不是443时显示端口
+						let displayAddress = parsed.address;
+						if (parsed.type === 'ipv6') {
+							displayAddress = '[' + displayAddress + ']'; 
+						}
+						if (parsed.port !== "443") {
+							displayAddress += ':' + parsed.port;
+						}
                         return '<div class="ip-item" data-ip="' + address + '">\
                             <div class="ip-info">\
                                 <span class="ip-address">' + displayAddress + '#' + location + (latency ? '_' + Math.round(latency) + 'ms' : '') + typeBadge + '</span>\
