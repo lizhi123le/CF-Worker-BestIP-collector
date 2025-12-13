@@ -206,14 +206,18 @@ function formatAddressOutput(address, location, latency) {
   const parsed = parseAddressWithPort(address);
   const portPart = parsed.port !== "443" ? `:${parsed.port}` : "";
   const latencyPart = latency ? `_${Math.round(latency)}ms` : "";
+  let displayLocation = location || "未知";  // 默认
+  if (parsed.type !== 'domain' && (displayLocation === "未知" || displayLocation.toLowerCase() === 'ipv4' || displayLocation.toLowerCase() === 'ipv6')) {
+    displayLocation = parsed.type.toUpperCase();  // IPv4 或 IPv6
+  }
   if (parsed.type === 'ipv6') {
-    return `[${parsed.address}]${portPart}#${location}${latencyPart}`;
+    return `[${parsed.address}]${portPart}#${displayLocation}${latencyPart}`;
   } else if (parsed.type === 'domain') {
-    const loc = location && location !== "未知" ? location : parsed.address;
+    const loc = displayLocation && displayLocation !== "未知" ? displayLocation : parsed.address;  // 域名不变
     return `${parsed.address}${portPart}#${loc}${latencyPart}`;
   } else {
     // IPv4
-    return `${parsed.address}${portPart}#${location}${latencyPart}`;
+    return `${parsed.address}${portPart}#${displayLocation}${latencyPart}`;
   }
 }
 // 解析已格式化的地址
@@ -316,7 +320,10 @@ function extractAddressesFromHTML(html) {
     if (hashIndex !== -1) {
       addr = candidate.substring(0, hashIndex).trim(); // Trim to remove spaces
       const rest = candidate.substring(hashIndex + 1).trim(); // Trim rest
-      loc = rest.replace(/^#/, '').split('_')[0]; // Remove # if needed, take first part
+      loc = rest.replace(/^#/, '').split('_')[0];
+	  if (loc && (loc.toLowerCase() === 'ipv4' || loc.toLowerCase() === 'ipv6')) {
+		loc = null;  // 视为未知，触发后续逻辑
+	  }
     }
     if (isValidAddressWithPort(addr)) {
       const parsed = parseAddressWithPort(addr);
@@ -389,6 +396,9 @@ function extractAddressesFromHTML(html) {
       addr = candidate.substring(0, hashIndex).trim();
       const rest = candidate.substring(hashIndex + 1).trim();
       loc = rest.replace(/^#/, '').split('_')[0];
+	  if (loc && (loc.toLowerCase() === 'ipv4' || loc.toLowerCase() === 'ipv6')) {
+		loc = null;  // 视为未知，触发后续逻辑
+	  }
     }
     if (isValidAddressWithPort(addr)) {
       const parsed = parseAddressWithPort(addr);
@@ -448,6 +458,9 @@ function extractAddressesFromHTML(html) {
       addr = candidate.substring(0, hashIndex).trim();
       const rest = candidate.substring(hashIndex + 1).trim();
       loc = rest.replace(/^#/, '').split('_')[0];
+	  if (loc && (loc.toLowerCase() === 'ipv4' || loc.toLowerCase() === 'ipv6')) {
+		loc = null;  // 视为未知，触发后续逻辑
+	  }
     }
     if (isValidAddressWithPort(addr)) {
       const parsed = parseAddressWithPort(addr);
@@ -516,8 +529,8 @@ async function handleUpdate(env) {
   const knownLocations = new Map();
   addressesWithLocation.forEach(item => {
     const srcLoc = item.location?.trim();
-    const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？"]);
-    if (srcLoc && !useless.has(srcLoc) && srcLoc.toLowerCase() !== "unknown") {
+    const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？","ipv4","ipv6","ip v4","ip v6"]);  // 添加常见变体，忽略大小写已在代码中处理
+    if (srcLoc && !useless.has(srcLoc.toLowerCase()) && srcLoc.toLowerCase() !== "unknown") {
       knownLocations.set(item.address, srcLoc);
     }
     else {
@@ -1717,13 +1730,17 @@ async function serveHTML(env, request) {
           const parsed = parseAddressWithPort(address);
           const portPart = parsed.port !== "443" ? ':' + parsed.port : "";
           const latencyPart = latency ? Math.round(latency) + 'ms' : "";
+          let displayLocation = location || "未知";
+          if (parsed.type !== 'domain' && (displayLocation === "未知" || displayLocation.toLowerCase() === 'ipv4' || displayLocation.toLowerCase() === 'ipv6')) {
+            displayLocation = parsed.type.toUpperCase();
+          }
           if (parsed.type === 'ipv6') {
-            return '[' + parsed.address + ']' + portPart + '#' + location + (latencyPart ? '_' + latencyPart : '');
+            return '[' + parsed.address + ']' + portPart + '#' + displayLocation + (latencyPart ? '_' + latencyPart : '');
           } else if (parsed.type === 'domain') {
-            return parsed.address + portPart + '#' + parsed.address + (latencyPart ? '_' + latencyPart : '');
+            return parsed.address + portPart + '#' + (displayLocation && displayLocation !== "未知" ? displayLocation : parsed.address) + (latencyPart ? '_' + latencyPart : '');
           } else {
             // IPv4
-            return parsed.address + portPart + '#' + location + (latencyPart ? '_' + latencyPart : '');
+            return parsed.address + portPart + '#' + displayLocation + (latencyPart ? '_' + latencyPart : '');
           }
         }
         let speedResults = {};
@@ -1853,7 +1870,12 @@ async function serveHTML(env, request) {
                     speedElement.textContent = rounded + 'ms';
                     speedElement.className = 'speed-result ' + speedClass;
                     // 安全地更新地址元素文本
-                    const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
+                    const parsed = parseAddressWithPort(address);
+                    let displayLocation = data.location || '未知';
+                    if (parsed.type !== 'domain' && (displayLocation === "未知" || displayLocation.toLowerCase() === 'ipv4' || displayLocation.toLowerCase() === 'ipv6')) {
+                      displayLocation = parsed.type.toUpperCase();
+                    }
+                    const baseText = addressElement.textContent.split('#')[0] + '#' + displayLocation;
                     addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
                     showMessage('地址 ' + address + ' 测速完成: ' + rounded + 'ms');
                 } else {
@@ -1932,7 +1954,12 @@ async function serveHTML(env, request) {
                             speedElement.className = 'speed-result ' + speedClass;
                         }
                         if (addressElement) {
-                            const baseText = addressElement.textContent.split('#')[0] + '#' + (data.location || '未知');
+                            const parsed = parseAddressWithPort(address);
+                            let displayLocation = data.location || '未知';
+                            if (parsed.type !== 'domain' && (displayLocation === "未知" || displayLocation.toLowerCase() === 'ipv4' || displayLocation.toLowerCase() === 'ipv6')) {
+                              displayLocation = parsed.type.toUpperCase();
+                            }
+                            const baseText = addressElement.textContent.split('#')[0] + '#' + displayLocation;
                             addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
                         }
                         speedResults[address] = { latency: rounded, success: true };
@@ -2152,10 +2179,14 @@ async function serveHTML(env, request) {
                         const address = item?.address || 'unknown';
                         const safeId = simpleHash(address);
                         const location = item?.location || '未知';
+                        let displayLocation = location;
+                        const parsed = parseAddressWithPort(item?.address || 'unknown');
+                        if (parsed.type !== 'domain' && (displayLocation === "未知" || displayLocation.toLowerCase() === 'ipv4' || displayLocation.toLowerCase() === 'ipv6')) {
+                          displayLocation = parsed.type.toUpperCase();
+                        }
                         const latency = item?.latency;
                         // 添加类型角标
                         let typeBadge = '';
-						const parsed = parseAddressWithPort(address);
 						if (parsed.type === 'ipv6') {
 							typeBadge = '<span style="background:#10b981; color:white; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-left:8px;">IPv6</span>';
 						} else if (parsed.type === 'ipv4') {
