@@ -480,7 +480,7 @@ function preprocessBlacklist(blacklist) {
   const domainSet = new Set();
   blacklist.forEach(item => {
     if (item.startsWith('"') && item.endsWith('"')) {
-      const domain = item.slice(1, -1).trim();
+      const domain = item.slice(1, -1).trim().toLowerCase();// 不区分大小写
       if (domain) domainSet.add(domain);
     } else {
       exactSet.add(item);
@@ -493,7 +493,7 @@ function isBlacklisted(address, blacklistPreprocessed) {
   const { exactSet, domainSet } = blacklistPreprocessed;
   if (exactSet.has(address)) return true;
   const parsedAddress = parseAddressWithPort(address);
-  const addressBase = parsedAddress.address; // 基础地址（不带端口）
+  const addressBase = parsedAddress.address.toLowerCase();// 基础地址（不带端口）不区分大小写
   // 只对域名类型检查子域名模式
   if (parsedAddress.type === 'domain' && domainSet.size > 0) {
     for (const domain of domainSet) {
@@ -1334,7 +1334,7 @@ async function serveHTML(env, request) {
         .social-link.github { color: #1f2937; }
         .social-link.telegram { color: #3b82f6; }
 		.social-link.telegram { display: inline-flex; align-items: center; justify-content: center; }
-		.social-link.telegram svg { display: block; transform: translate(-2.6px, -3.2px); }
+		.social-link.telegram svg { display: block; transform: translate(-2.8px, -3.6px); }
         .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
         .admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
         .admin-button:hover { background: #2563eb; }
