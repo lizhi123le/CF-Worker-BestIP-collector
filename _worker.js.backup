@@ -817,7 +817,7 @@ async function getLocationsForAddresses(addresses) {
           const sr = await fetch(`https://ipinfo.io/${ip}/json`);
           if (sr.ok) {
             const sdata = await sr.json();
-            if (sdata.country) locs[index] = sdata.country;
+            if (sdata.country) locs[index] = sdata.country + '_IPv6';
           }
         } catch (se) {
           console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
@@ -857,7 +857,7 @@ async function getLocationsForAddresses(addresses) {
         // Step 3: 提取location.country_code
         const countryCode = locationData?.location?.country_code;
         if (countryCode) {
-          locs[batchIndices[j]] = countryCode; // 成功：覆盖为国家代码
+          locs[batchIndices[j]] = parsed.address + '_' + countryCode; // 成功：覆盖为国家代码
         }
         // else: 保持回退域名
       } catch (e) {
@@ -2406,7 +2406,7 @@ async function handleSpeedTest(req, env) {
       if (response.ok) {
         const data = await response.json();
         if (data.country) {
-          location = data.country;
+          location = data.country + '_IPv6';
         }
       }
     } catch (e) {
@@ -2425,15 +2425,44 @@ async function handleSpeedTest(req, env) {
     } catch (e) {
       console.error("Failed to get location for IPv4", parsed.address, e);
     }
-  } else {
-    // 域名
-    location = parsed.address;
+  } else if (parsed.type === 'domain') {
+    try {
+      // Step 1: 用Cloudflare DoH解析域名到IPv4 IP
+      const dohUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(parsed.address)}&type=A`;
+      const dohResponse = await fetch(dohUrl, {
+        headers: { 'Accept': 'application/dns-json' }
+      });
+      if (!dohResponse.ok) throw new Error(`DoH 请求失败: ${dohResponse.status}`);
+      const dohData = await dohResponse.json();
+      if (dohData.Status !== 0 || !dohData.Answer) throw new Error('DoH 无有效响应');
+      
+      // 提取第一个A记录 (type=1) 的IP
+      const ipRecord = dohData.Answer.find(ans => ans.type === 1);
+      if (!ipRecord || !ipRecord.data) throw new Error('无IPv4记录');
+      const ip = ipRecord.data;
+      
+      // Step 2: 用IP查询API
+      const apiUrl = `https://api.ipapi.is/?q=${encodeURIComponent(ip)}`;
+      const apiResponse = await fetch(apiUrl);
+      if (!apiResponse.ok) throw new Error(`API 请求失败: ${apiResponse.status}`);
+      const locationData = await apiResponse.json();
+      
+      // Step 3: 提取location.country_code
+      const countryCode = locationData?.location?.country_code;
+      if (countryCode) {
+        location = parsed.address + '_' + countryCode; // 成功：覆盖为域名_国家代码
+      }
+      // else: 保持回退域名
+    } catch (e) {
+      console.error(`域名位置查询失败 for ${parsed.address}:`, e);
+      // 失败：保持初始回退域名
+    }
   }
   return jsonResponse({
     success: r.success,
     latency: r.latency,
     ip: decodedAddress,
-    location: location
+    location: location || parsed.address
   });
 }
 async function handleSaveLatency(req, env) { return jsonResponse({success:true}); }
