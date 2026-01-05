@@ -346,6 +346,7 @@ function extractAddressesFromHTML(html) {
     let loc = null;
     if (remarkPart) {
       loc = remarkPart.trim().replace(/^#/, '').split('_')[0].trim();
+      if (loc) loc += '_IPv6';
     }
     // 标准格式：[ipv6]:port
     const standardAddr = `[${ipInside}]${portStr}`;
@@ -367,6 +368,7 @@ function extractAddressesFromHTML(html) {
       addr = candidate.substring(0, hashIdx).trim();
       const rest = candidate.substring(hashIdx).trim();
       loc = rest.replace(/^#/, '').split('_')[0].trim();
+      if (loc) loc += '_IPv6';
     }
     const portMatch = addr.match(/:(\d{1,5})$/);
     const portStr = portMatch ? ':' + portMatch[1] : '';
@@ -803,7 +805,7 @@ async function getLocationsForAddresses(addresses) {
         const data = await r.json();
         data.forEach((d, j) => {
           if (d.country) {
-            locs[batchIndices[j]] = d.country;
+            locs[batchIndices[j]] = d.country + '_IPv6';
           }
         });
       }
