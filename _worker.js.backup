@@ -37,6 +37,47 @@ export default {
     }
   }
 };
+/* ====================== 公共工具升级 ====================== */
+
+// 清洗自定义路径，拒绝潜在的路径遍历与非法字符
+function sanitizePath(input) {
+  if (typeof input !== 'string') return '';
+  let p = input.trim();
+  // 去除前后斜杠
+  while (p.startsWith('/')) p = p.slice(1);
+  while (p.endsWith('/')) p = p.slice(0, -1);
+  // 合并连续斜杠
+  p = p.replace(/\/{2,}/g, '/');
+  // 路径遍历防护
+  if (p.includes('..') || p.includes('../') || p.includes('..\\')) return '';
+  // 允许字符集合（字母、数字、下划线、点、短横）
+  if (!/^[A-Za-z0-9._-]*$/.test(p)) return '';
+  return p;
+}
+
+// 带重试的通用请求封装：返回原始 Response，需要再进行 .json()/.text() 等处理
+async function fetchWithRetry(input, options = {}, retries = 2, backoffMs = 200) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(input, options);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return resp;
+    } catch (e) {
+      lastError = e;
+      if (attempt < retries) {
+        const delay = backoffMs * Math.pow(2, attempt);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+async function getCustomPath(env) {
+  const raw = await env.IP_STORAGE.get("custom_path");
+  const cleaned = sanitizePath(raw ?? '');
+  return cleaned; // 如为空，则后续逻辑会使用默认路径
+}
 /* ====================== 工具函数 ====================== */
 function formatTimestampKey(date = new Date()) {
   const y = (date.getFullYear() % 100).toString().padStart(2, '0');
@@ -52,9 +93,6 @@ function parseTimestampKey(key) {
   const [_, y, M, d, h, m] = match;
   const year = 2000 + parseInt(y, 10);
   return new Date(year, parseInt(M, 10) - 1, parseInt(d, 10), parseInt(h, 10), parseInt(m, 10));
-}
-async function getCustomPath(env) {
-  return await env.IP_STORAGE.get("custom_path") || '';
 }
 /* ====================== 地址验证与处理函数 ====================== */
 // IPv6 验证 - 增强版
@@ -256,38 +294,41 @@ function parseFormattedAddress(formatted) {
     type
   };
 }
-/* ====================== 白名单域名（只保留这些结尾的域名） ====================== */
+/* ====================== 白名单域名（严格后缀匹配） ====================== */
 const WHITELIST_DOMAINS = [
-"xyz", "hk", "tw", "mo", "com", "ch", "br", "eu.org","fun","fan",
-"icu", "mn", "in", "sb", "is", "org", "ir", "app","ltd","buzz",
-"ws", "net", "pw", "one", "top", "lt", "cylex.hu","vip","shop",
-"cn", "us", "uk", "de", "fr", "jp", "kr", "sg", "au", "ca",
-"it", "es", "ru", "se", "no", "fi", "dk", "pl", "cz", "gr",
-"be", "nl", "ie", "nz", "mx", "ar", "cl", "tr", "sa", "ae",
-"id", "my", "th", "vn", "ph", "bd", "pk", "lk", "np", "il",
-"za", "ng", "ke", "tz", "gh", "eg", "ma", "dz", "tn", "qa",
-"kw", "bh", "om", "by", "ua", "sk", "hu", "ro", "bg", "rs",
-"info", "biz", "mobi", "name", "pro", "aero", "coop", "museum",
-"int", "gov", "edu", "mil", "tv", "me", "io", "ai", "gg",
-"fm", "am", "sh", "cc", "la", "bz", "vc", "sc", "ag", "gd",
-"lc", "dm", "ht", "do", "cr", "hn", "ni", "pa", "py", "uy",
-"bo", "ec", "pe", "ve", "co", "sr", "gy", "jm", "tt", "bb",
-"bs", "bm", "mq", "gp", "re", "yt", "tf", "wf", "pf", "nc",
-"pn", "tk", "to", "vu", "ki", "nr", "mh", "pg", "fj", "ck",
-"nu", "ax", "gl", "fo", "je", "im", "gi", "mt", "cy", "lu",
-"li", "mc", "sm", "va", "ad", "al", "ba", "mk", "md", "ge",
-"az", "af", "ao", "bj", "bw", "cv", "et", "gm", "gn", "lr",
-"mz", "na", "rw", "sd", "sl", "sn", "so", "ss", "ug", "zm",
-"zw", "bt", "kh", "mm", "kp", "iq", "sy", "jo", "lb", "ps",
-"ye", "kg", "uz", "tj", "tm", "kz", "ee", "lv"
+  "xyz","hk","tw","mo","com","ch","br","eu.org","fun","fan",
+  "icu","mn","in","sb","is","org","ir","app","ltd","buzz",
+  "ws","net","pw","one","top","lt","cylex.hu","vip","shop",
+  "cn","us","uk","de","fr","jp","kr","sg","au","ca",
+  "it","es","ru","se","no","fi","dk","pl","cz","gr",
+  "be","nl","ie","nz","mx","ar","cl","tr","sa","ae",
+  "id","my","th","vn","ph","bd","pk","lk","np","il",
+  "za","ng","ke","tz","gh","eg","ma","dz","tn","qa",
+  "kw","bh","om","by","ua","sk","hu","ro","bg","rs",
+  "info","biz","mobi","name","pro","aero","coop","museum",
+  "int","gov","edu","mil","tv","me","io","ai","gg",
+  "fm","am","sh","cc","la","bz","vc","sc","ag","gd",
+  "lc","dm","ht","do","cr","hn","ni","pa","py","uy",
+  "bo","ec","pe","ve","co","sr","gy","jm","tt","bb",
+  "bs","bm","mq","gp","re","yt","tf","wf","pf","nc",
+  "pn","tk","to","vu","ki","nr","mh","pg","fj","ck",
+  "nu","ax","gl","fo","je","im","gi","mt","cy","lu",
+  "li","mc","sm","va","ad","al","ba","mk","md","ge",
+  "az","af","ao","bj","bw","cv","et","gm","gn","lr",
+  "mz","na","rw","sd","sl","sn","so","ss","ug","zm",
+  "zw","bt","kh","mm","kp","iq","sy","jo","lb","ps",
+  "ye","kg","uz","tj","tm","kz","ee","lv"
 ];
-// 优化：使用 Set 加速域名后缀检查（O(1) 平均）
-const WHITELIST_SET = new Set(WHITELIST_DOMAINS.map(d => "." + d));
+// 简化为仅使用小写后缀的集合，便于快速判断
+const WHITELIST_SUFFIXES = WHITELIST_DOMAINS.map(d => d.toLowerCase());
+
 function isWhitelistedDomain(domain) {
-  if (!domain) return false;
-  // 检查是否以白名单中的域名结尾
-  for (const wl of WHITELIST_SET) {
-    if (domain.endsWith(wl) || domain === wl.slice(1)) return true;
+  if (!domain || typeof domain !== 'string') return false;
+  const d = domain.toLowerCase().trim().replace(/^\.+|\.+$/g, '');
+  if (!d) return false;
+  for (const suffix of WHITELIST_SUFFIXES) {
+    // 直接命中后缀，或作为完整域名匹配
+    if (d === suffix || d.endsWith('.' + suffix)) return true;
   }
   return false;
 }
@@ -303,7 +344,7 @@ function extractAddressesFromHTML(html) {
   // 预编译正则 (updated to support Chinese in remarks with Unicode 'gu' flag)
   const patterns = {
     ipv6WithBrackets: /\[([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7}(?:::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7})?)\](?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
-    plainIpv6: /(?<![\w\]])([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}|[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,6}::(?::[0-9a-fA-F]{1,4}){0,6})(?![\w:\/])(?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+    plainIpv6: /([0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){2,7})(?::\\d{1,5})?/g,
 	domainWithHash: /[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
     attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
@@ -732,143 +773,117 @@ async function updateAllAddresses(env) {
 async function getLocationsForAddresses(addresses) {
   const batchSize = 39;
   const locs = new Array(addresses.length).fill("未知");
-  // 处理所有地址
-  for (let i = 0; i < addresses.length; i++) {
-    const addr = addresses[i];
+
+  // 初始：域名默认回退到域名本身
+  addresses.forEach((addr, idx) => {
     const parsed = parseAddressWithPort(addr);
-    // 域名初始位置设置为域名本身（作为回退）
-    if (parsed.type === 'domain') {
-      locs[i] = parsed.address; // 初始回退为域名
-    }
-    // IPv4和IPv6的位置将在下面获取
-  }
-  // 只对IPv4地址使用IP-API
-  const ipv4Addresses = [];
-  const ipv4Indices = [];
-  // 只对IPv6地址使用ipinfo.io
-  const ipv6Addresses = [];
-  const ipv6Indices = [];
-  // 新增：收集域名地址
-  const domainAddresses = [];
-  const domainIndices = [];
-  addresses.forEach((addr, index) => {
-    const parsed = parseAddressWithPort(addr);
-    if (parsed.type === 'ipv4') {
-      ipv4Addresses.push(parsed.address);
-      ipv4Indices.push(index);
-    } else if (parsed.type === 'ipv6') {
-      ipv6Addresses.push(parsed.address);
-      ipv6Indices.push(index);
-    } else if (parsed.type === 'domain') {
-      domainAddresses.push(parsed.address);
-      domainIndices.push(index);
-    }
+    if (parsed.type === 'domain') locs[idx] = parsed.address;
   });
-  // 处理IPv4地理位置（不变）
+
+  // 分类收集
+  const ipv4Addresses = [], ipv4Indices = [];
+  const ipv6Addresses = [], ipv6Indices = [];
+  const domainAddresses = [], domainIndices = [];
+
+  addresses.forEach((addr, idx) => {
+    const parsed = parseAddressWithPort(addr);
+    if (parsed.type === 'ipv4') { ipv4Addresses.push(parsed.address); ipv4Indices.push(idx); }
+    else if (parsed.type === 'ipv6') { ipv6Addresses.push(parsed.address); ipv6Indices.push(idx); }
+    else if (parsed.type === 'domain') { domainAddresses.push(parsed.address); domainIndices.push(idx); }
+  });
+
+  // IPv4 - 批量
   for (let i = 0; i < ipv4Addresses.length; i += batchSize) {
+    const batchIps = ipv4Addresses.slice(i, i + batchSize);
     const batchIndices = ipv4Indices.slice(i, i + batchSize);
-    const batch = ipv4Addresses.slice(i, i + batchSize).map(ip => ({
-      query: ip,
-      fields: "countryCode"
-    }));
+    const batchBody = batchIps.map(ip => ({ query: ip, fields: "countryCode" }));
     try {
-      const r = await fetch("http://ip-api.com/batch", {
+      const resp = await fetchWithRetry("http://ip-api.com/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(batch)
-      });
-      if (r.ok) {
-        const data = await r.json();
+        body: JSON.stringify(batchBody)
+      }, 3, 200);
+      if (resp.ok) {
+        const data = await resp.json();
         data.forEach((o, j) => {
-          if (o.countryCode) {
-            locs[batchIndices[j]] = o.countryCode;
-          }
+          if (o?.countryCode) locs[batchIndices[j]] = o.countryCode;
         });
       }
     } catch (e) {
-      console.error("Location batch failed for IPv4:", e);
+      console.error("Location IPv4 batch failed:", e);
     }
     if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
   }
-  // 处理IPv6地理位置（不变）
+
+  // IPv6 - 批量
   const ipv6BatchSize = 4;
   for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
-    const batch = ipv6Addresses.slice(i, i + ipv6BatchSize);
+    const batchIps = ipv6Addresses.slice(i, i + ipv6BatchSize);
     const batchIndices = ipv6Indices.slice(i, i + ipv6BatchSize);
     try {
-      const r = await fetch("https://ipinfo.io/batch", {
+      const resp = await fetchWithRetry("https://ipinfo.io/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(batch)
-      });
-      if (r.ok) {
-        const data = await r.json();
+        body: JSON.stringify(batchIps)
+      }, 3, 400);
+      if (resp.ok) {
+        const data = await resp.json();
         data.forEach((d, j) => {
-          if (d.country) {
-            locs[batchIndices[j]] = d.country + '_IPv6';
-          }
+          if (d?.country) locs[batchIndices[j]] = d.country + '_IPv6';
         });
       }
     } catch (e) {
-      console.error(`Location batch failed for IPv6 batch ${i}:`, e);
-      // Fallback to single requests for this batch
-      for (let k = 0; k < batch.length; k++) {
-        const index = batchIndices[k];
-        const ip = batch[k];
+      console.error("Location batch IPv6 failed:", e);
+      // 回退：逐个请求
+      for (let k = 0; k < batchIps.length; k++) {
+        const idx = batchIndices[k];
+        const ip = batchIps[k];
         try {
-          const sr = await fetch(`https://ipinfo.io/${ip}/json`);
+          const sr = await fetchWithRetry(`https://ipinfo.io/${ip}/json`, {}, 1, 0);
           if (sr.ok) {
             const sdata = await sr.json();
-            if (sdata.country) locs[index] = sdata.country + '_IPv6';
+            if (sdata?.country) locs[idx] = sdata.country + '_IPv6';
           }
         } catch (se) {
-          console.error(`Fallback location fetch failed for IPv6 ${ip}:`, se);
+          console.error("Fallback IPv6 location failed for", ip, se);
         }
-        if (k + 1 < batch.length) await new Promise(r => setTimeout(r, 1100));
+        if (k + 1 < batchIps.length) await new Promise(r => setTimeout(r, 1100));
       }
     }
     if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1000));
   }
-  // 增强：处理域名地理位置，先用DoH解析IP，然后用 https://api.ipapi.is/?q=IP 查询
-  const domainBatchSize = 4; // 小批量，避免限速
+
+  // 域名 DoH + 国家代码
+  const domainBatchSize = 4;
   for (let i = 0; i < domainAddresses.length; i += domainBatchSize) {
-    const batch = domainAddresses.slice(i, i + domainBatchSize);
+    const batchDomains = domainAddresses.slice(i, i + domainBatchSize);
     const batchIndices = domainIndices.slice(i, i + domainBatchSize);
-    await Promise.all(batch.map(async (domain, j) => {
+    for (let j = 0; j < batchDomains.length; j++) {
+      const domain = batchDomains[j];
+      const idx = batchIndices[j];
       try {
-        // Step 1: 用Cloudflare DoH解析域名到IPv4 IP
-        const dohUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=A`;
-        const dohResponse = await fetch(dohUrl, {
+        const dohResp = await fetchWithRetry(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=A`, {
           headers: { 'Accept': 'application/dns-json' }
-        });
-        if (!dohResponse.ok) throw new Error(`DoH 请求失败: ${dohResponse.status}`);
-        const dohData = await dohResponse.json();
-        if (dohData.Status !== 0 || !dohData.Answer) throw new Error('DoH 无有效响应');
-      
-        // 提取第一个A记录 (type=1) 的IP
-        const ipRecord = dohData.Answer.find(ans => ans.type === 1);
-        if (!ipRecord || !ipRecord.data) throw new Error('无IPv4记录');
+        }, 3, 200);
+        if (!dohResp.ok) continue;
+        const dohData = await dohResp.json();
+        if (dohData.Status !== 0 || !dohData.Answer) continue;
+        const ipRecord = dohData.Answer.find(a => a.type === 1);
+        if (!ipRecord || !ipRecord.data) continue;
         const ip = ipRecord.data;
-      
-        // Step 2: 用IP查询API
-        const apiUrl = `https://api.ipapi.is/?q=${encodeURIComponent(ip)}`;
-        const apiResponse = await fetch(apiUrl);
-        if (!apiResponse.ok) throw new Error(`API 请求失败: ${apiResponse.status}`);
-        const locationData = await apiResponse.json();
-      
-        // Step 3: 提取location.country_code
-        const countryCode = locationData?.location?.country_code;
-        if (countryCode) {
-          locs[batchIndices[j]] = parsed.address + '_' + countryCode; // 成功：覆盖为国家代码
+        const apiResp = await fetchWithRetry(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}`, {}, 3, 400);
+        if (apiResp.ok) {
+          const locationData = await apiResp.json();
+          const countryCode = locationData?.location?.country_code;
+          if (countryCode) locs[idx] = domain + '_' + countryCode;
         }
-        // else: 保持回退域名
       } catch (e) {
-        console.error(`域名位置查询失败 for ${domain}:`, e);
-        // 失败：保持初始回退域名
+        console.error("Domain location failed for", domain, e);
       }
-    }));
-    if (i + domainBatchSize < domainAddresses.length) await new Promise(r => setTimeout(r, 336)); // 批次间隔1秒
+      await new Promise(r => setTimeout(r, 336));
+    }
   }
+
   return locs;
 }
 async function fetchURLWithTimeout(url, timeout = 10000) {
@@ -886,7 +901,6 @@ async function fetchURLWithTimeout(url, timeout = 10000) {
 async function testIPLatency(addressWithPort, timeout = 10000) {
   let attempts = 0;
   const maxAttempts = 1;
-  // 确保 IPv6 地址有正确的格式
   let formattedAddress = addressWithPort;
   const parsed = parseAddressWithPort(addressWithPort);
   if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
@@ -897,11 +911,11 @@ async function testIPLatency(addressWithPort, timeout = 10000) {
     const tid = setTimeout(() => controller.abort(), timeout);
     try {
       const start = performance.now();
-      const resp = await fetch("https://speed.cloudflare.com/__down?bytes=500000", {
+      const resp = await fetchWithRetry("https://speed.cloudflare.com/__down?bytes=500000", {
         signal: controller.signal,
         headers: { Host: "speed.cloudflare.com" },
-        cf: { resolveOverride: formattedAddress } // Cloudflare 支持 IP:PORT、[IPv6]:PORT 和域名:PORT
-      });
+        cf: { resolveOverride: formattedAddress } // Cloudflare 的解析覆盖
+      }, 3, 200);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       await resp.arrayBuffer();
       const latency = performance.now() - start;
@@ -1246,7 +1260,7 @@ async function handleLogin(req, env) {
   const token = btoa(now.toString());
   const expires = new Date(now + 1 * 60 * 60 * 1000).toUTCString();
   const headers = new Headers();
-  headers.append('Set-Cookie', `admin_session=${token}=${token}; Path=/; Expires=${expires}; HttpOnly; Secure; SameSite=Strict`);
+  headers.append('Set-Cookie', `admin_session=${token}; Path=/; Expires=${expires}; HttpOnly; Secure; SameSite=Strict`);
   headers.append('Content-Type', 'application/json');
   return new Response(JSON.stringify({ success: true }), { status: 200, headers });
 }
@@ -2396,73 +2410,94 @@ async function handleSpeedTest(req, env) {
   const url = new URL(req.url);
   const address = url.searchParams.get("ip");
   if (!address) return jsonResponse({ error: "missing ip" }, 400);
+
   const decodedAddress = decodeURIComponent(address);
-  const r = await testIPLatency(decodedAddress);
-  // 获取位置信息
-  let location = "未知";
   const parsed = parseAddressWithPort(decodedAddress);
-  if (parsed.type === 'ipv6') {
-    // 使用 ipinfo.io 获取 IPv6 地理位置
-    try {
-      const response = await fetch(`https://ipinfo.io/${parsed.address}/json`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.country) {
-          location = data.country + '_IPv6';
-        }
-      }
-    } catch (e) {
-      console.error("Failed to get location for IPv6", parsed.address, e);
-    }
-  } else if (parsed.type === 'ipv4') {
-    // 使用 ip-api.com 获取 IPv4 地理位置
-    try {
-      const response = await fetch(`http://ip-api.com/json/${parsed.address}?fields=countryCode`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.countryCode) {
-          location = data.countryCode;
-        }
-      }
-    } catch (e) {
-      console.error("Failed to get location for IPv4", parsed.address, e);
-    }
-  } else if (parsed.type === 'domain') {
-    try {
-      // Step 1: 用Cloudflare DoH解析域名到IPv4 IP
-      const dohUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(parsed.address)}&type=A`;
-      const dohResponse = await fetch(dohUrl, {
-        headers: { 'Accept': 'application/dns-json' }
-      });
-      if (!dohResponse.ok) throw new Error(`DoH 请求失败: ${dohResponse.status}`);
-      const dohData = await dohResponse.json();
-      if (dohData.Status !== 0 || !dohData.Answer) throw new Error('DoH 无有效响应');
-      
-      // 提取第一个A记录 (type=1) 的IP
-      const ipRecord = dohData.Answer.find(ans => ans.type === 1);
-      if (!ipRecord || !ipRecord.data) throw new Error('无IPv4记录');
-      const ip = ipRecord.data;
-      
-      // Step 2: 用IP查询API
-      const apiUrl = `https://api.ipapi.is/?q=${encodeURIComponent(ip)}`;
-      const apiResponse = await fetch(apiUrl);
-      if (!apiResponse.ok) throw new Error(`API 请求失败: ${apiResponse.status}`);
-      const locationData = await apiResponse.json();
-      
-      // Step 3: 提取location.country_code
-      const countryCode = locationData?.location?.country_code;
-      if (countryCode) {
-        location = parsed.address + '_' + countryCode; // 成功：覆盖为域名_国家代码
-      }
-      // else: 保持回退域名
-    } catch (e) {
-      console.error(`域名位置查询失败 for ${parsed.address}:`, e);
-      // 失败：保持初始回退域名
-    }
+
+  // 形成 Cloudflare Resolver 的覆盖地址
+  // IPv6 需要方括号包裹
+  let formattedAddress = decodedAddress;
+  if (parsed.type === 'ipv6' && !decodedAddress.startsWith('[')) {
+    formattedAddress = `[${parsed.address}]:${parsed.port}`;
   }
+
+  // 测速请求，使用 fetchWithRetry 封装，3 次尝试，逐步退避
+  let latency = null;
+  let latencySuccess = false;
+  try {
+    const start = performance.now();
+    const resp = await fetchWithRetry(
+      "https://speed.cloudflare.com/__down?bytes=500000",
+      {
+        method: "GET",
+        headers: { Host: "speed.cloudflare.com" },
+        cf: { resolveOverride: formattedAddress }
+      },
+      3,
+      200
+    );
+    if (resp && resp.ok) {
+      await resp.arrayBuffer();
+      latency = Math.round(performance.now() - start);
+      latencySuccess = true;
+    } else {
+      latency = null;
+      latencySuccess = false;
+    }
+  } catch (err) {
+    latency = null;
+    latencySuccess = false;
+  }
+
+  // 位置信息获取
+  let location = "未知";
+  try {
+    if (parsed.type === 'ipv4') {
+      // IPv4：ip-api
+      const r = await fetchWithRetry(`http://ip-api.com/json/${parsed.address}?fields=countryCode`, {}, 2, 1000);
+      if (r.ok) {
+        const data = await r.json();
+        if (data?.countryCode) location = data.countryCode;
+      }
+    } else if (parsed.type === 'ipv6') {
+      // IPv6：ipinfo
+      const r = await fetchWithRetry(`https://ipinfo.io/${parsed.address}/json`, {}, 2, 1000);
+      if (r.ok) {
+        const data = await r.json();
+        if (data?.country) location = data.country + "_IPv6";
+      }
+    } else if (parsed.type === 'domain') {
+      // 域名：DoH 解析 -> IPv4，再用 ipapi 获取国家/地区
+      try {
+        const doh = await fetchWithRetry(
+          `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(parsed.address)}&type=A`,
+          { headers: { 'Accept': 'application/dns-json' } },
+          2,
+          200
+        );
+        if (doh.ok) {
+          const dohData = await doh.json();
+          const ipRecord = dohData?.Answer?.find(a => a.type === 1);
+          if (ipRecord?.data) {
+            const apiResp = await fetchWithRetry(`https://api.ipapi.is/?q=${encodeURIComponent(ipRecord.data)}`, {}, 2, 400);
+            if (apiResp.ok) {
+              const locationData = await apiResp.json();
+              const countryCode = locationData?.location?.country_code;
+              if (countryCode) location = parsed.address + "_" + countryCode;
+            }
+          }
+        }
+      } catch (e) {
+        // DoH/定位失败时保持默认的 "未知"
+      }
+    }
+  } catch (e) {
+    // 捕获定位阶段的错误，但不影响主返回
+  }
+
   return jsonResponse({
-    success: r.success,
-    latency: r.latency,
+    success: latencySuccess,
+    latency: latency,
     ip: decodedAddress,
     location: location || parsed.address
   });
@@ -2483,7 +2518,7 @@ return jsonResponse({ success: true, message: `已限制显示 ${limit} 条` });
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "" }
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
   });
 }
 function methodNotAllowed() {
@@ -2492,7 +2527,7 @@ function methodNotAllowed() {
 function handleCORS() {
   return new Response(null, {
     headers: {
-      "Access-Control-Allow-Origin": "",
+      "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type"
     }
