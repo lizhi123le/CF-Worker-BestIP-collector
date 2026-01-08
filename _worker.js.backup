@@ -38,7 +38,6 @@ export default {
   }
 };
 /* ====================== 公共工具升级 ====================== */
-
 // 清洗自定义路径，拒绝潜在的路径遍历与非法字符
 function sanitizePath(input) {
   if (typeof input !== 'string') return '';
@@ -54,7 +53,6 @@ function sanitizePath(input) {
   if (!/^[A-Za-z0-9._-]*$/.test(p)) return '';
   return p;
 }
-
 // 带重试的通用请求封装：返回原始 Response，需要再进行 .json()/.text() 等处理
 async function fetchWithRetry(input, options = {}, retries = 2, backoffMs = 200) {
   let lastError;
@@ -321,7 +319,6 @@ const WHITELIST_DOMAINS = [
 ];
 // 简化为仅使用小写后缀的集合，便于快速判断
 const WHITELIST_SUFFIXES = WHITELIST_DOMAINS.map(d => d.toLowerCase());
-
 function isWhitelistedDomain(domain) {
   if (!domain || typeof domain !== 'string') return false;
   const d = domain.toLowerCase().trim().replace(/^\.+|\.+$/g, '');
@@ -344,7 +341,7 @@ function extractAddressesFromHTML(html) {
   // 预编译正则 (updated to support Chinese in remarks with Unicode 'gu' flag)
   const patterns = {
     ipv6WithBrackets: /\[([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7}(?:::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7})?)\](?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
-    plainIpv6: /([0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){2,7})(?::\\d{1,5})?/g,
+    plainIpv6: /([0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){2,7})(?::\d{1,5})?/g,
 	domainWithHash: /[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
     attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
@@ -675,23 +672,23 @@ async function handleUpdate(env) {
 /* ====================== 从最近历史记录获取数据 ====================== */
 async function getRecentHistoryData(env, limit = 3) {
   const historyData = [];
-  const LIST_LIMIT = 1000; // 增大limit以单次获取更多
+  const LIST_LIMIT = 1000; // increased limit to fetch more
   const now = new Date();
-  // 单次list所有键
+  // List all historical keys in one call
   const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
   const keys = [];
-  for (const key of list.keys) {
-    const date = parseTimestampKey(key.name);
+  for (const item of list.keys) {
+    const date = parseTimestampKey(item.name);
     if (date && date <= now) {
-      keys.push({ name: key.name, date: date });
+      keys.push({ name: item.name, date: date });
     }
   }
-  // 按时间降序排序
+  // Sort by timestamp descending
   keys.sort((a, b) => b.date - a.date);
-  // 获取最新的 limit 个有效记录
-  for (const key of keys) {
+  // Read the most recent entries up to limit
+  for (const k of keys) {
     if (historyData.length >= limit) break;
-    const raw = await env.IP_STORAGE.get(key.name);
+    const raw = await env.IP_STORAGE.get(k.name);
     if (!raw) continue;
     try {
       const data = JSON.parse(raw);
@@ -699,7 +696,7 @@ async function getRecentHistoryData(env, limit = 3) {
         historyData.push(data);
       }
     } catch (e) {
-      console.warn(`Failed to parse historical data ${key.name}:`, e);
+      console.warn(`Failed to parse historical data ${k.name}:`, e);
     }
   }
   return historyData;
@@ -773,25 +770,21 @@ async function updateAllAddresses(env) {
 async function getLocationsForAddresses(addresses) {
   const batchSize = 39;
   const locs = new Array(addresses.length).fill("未知");
-
   // 初始：域名默认回退到域名本身
   addresses.forEach((addr, idx) => {
     const parsed = parseAddressWithPort(addr);
     if (parsed.type === 'domain') locs[idx] = parsed.address;
   });
-
   // 分类收集
   const ipv4Addresses = [], ipv4Indices = [];
   const ipv6Addresses = [], ipv6Indices = [];
   const domainAddresses = [], domainIndices = [];
-
   addresses.forEach((addr, idx) => {
     const parsed = parseAddressWithPort(addr);
     if (parsed.type === 'ipv4') { ipv4Addresses.push(parsed.address); ipv4Indices.push(idx); }
     else if (parsed.type === 'ipv6') { ipv6Addresses.push(parsed.address); ipv6Indices.push(idx); }
     else if (parsed.type === 'domain') { domainAddresses.push(parsed.address); domainIndices.push(idx); }
   });
-
   // IPv4 - 批量
   for (let i = 0; i < ipv4Addresses.length; i += batchSize) {
     const batchIps = ipv4Addresses.slice(i, i + batchSize);
@@ -814,7 +807,6 @@ async function getLocationsForAddresses(addresses) {
     }
     if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
   }
-
   // IPv6 - 批量
   const ipv6BatchSize = 4;
   for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
@@ -852,7 +844,6 @@ async function getLocationsForAddresses(addresses) {
     }
     if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1000));
   }
-
   // 域名 DoH + 国家代码
   const domainBatchSize = 4;
   for (let i = 0; i < domainAddresses.length; i += domainBatchSize) {
@@ -883,7 +874,6 @@ async function getLocationsForAddresses(addresses) {
       await new Promise(r => setTimeout(r, 336));
     }
   }
-
   return locs;
 }
 async function fetchURLWithTimeout(url, timeout = 10000) {
@@ -996,7 +986,6 @@ async function cleanupOldIPs(env) {
       totalSize -= details[i].size;
     }
   }
-
   // 阶段2：如果还超总大小，继续删最旧的（绝不删前 MIN_KEEP_COUNT 条）
   for (let i = details.length - 1; i >= MIN_KEEP_COUNT; i--) {
     if (totalSize <= MAX_TOTAL_SIZE) break;
@@ -1005,7 +994,6 @@ async function cleanupOldIPs(env) {
       totalSize -= details[i].size;
     }
   }
-
   if (toDelete.size > 0) {
     console.log(`[清理] 即将删除 ${toDelete.size} 条历史记录，释放约 ${Math.round((details.reduce((s, i) => s + i.size, 0) - totalSize) / 1024)} KB`);
     // 批量删除（KV 支持一次性最多 10,000 个，够用了）
@@ -1157,11 +1145,10 @@ const addressSet = new Set();
 let latestIPs = (latest.ips || [])
   .filter(item => item && item.address && !isBlacklisted(item.address, blacklistPreprocessed));
 // 按延迟升序排序（无延迟排后面）
-latestIPs.sort((a, b) => {
-  if (a.latency && b.latency) return a.latency - b.latency;
-  if (a.latency) return -1;
-  if (b.latency) return 1;
-  return 0;
+latestIPs.sort((a, b) => { 
+  const latA = (typeof a.latency === 'number') ? a.latency : Number.POSITIVE_INFINITY; 
+  const latB = (typeof b.latency === 'number') ? b.latency : Number.POSITIVE_INFINITY; 
+  return latA - latB; 
 });
 const latestCount = latestIPs.length;
 // 如果 limit 为 null 或 <= 0，视为“显示最新全部”
@@ -1228,13 +1215,14 @@ async function getAdminStatus(env, request) {
     const match = cookie.match(/admin_session=([^;]+)/);
     if (match) {
       try {
-        const token = atob(match[1].split('=')[0]);
-        const now = Date.now();
-        const tokenTime = parseInt(token);
-        if (!isNaN(tokenTime) && now - tokenTime < 1 * 60 * 60 * 1000) {
+        // cookie 中存的是时间戳（字符串），先解码再转为数字
+        const tokenTime = Number(atob(match[1]));
+        if (!Number.isNaN(tokenTime) && Date.now() - tokenTime < 60 * 60 * 1000) {
           isLoggedIn = true;
         }
-      } catch {}
+      } catch {
+        // 忽略解码失败的情况
+      }
     }
   }
   const hasPassword = !!(await env.IP_STORAGE.get('admin_password_hash'));
@@ -1251,14 +1239,17 @@ async function handleSetPassword(req, env) {
 }
 async function handleLogin(req, env) {
   const { password } = await req.json();
-  if (!password) return jsonResponse({ error: '缺少密码' }, 400);
+  if (!password || typeof password !== 'string') {
+    return jsonResponse({ error: '缺少密码' }, 400);
+  }
   const storedHash = await env.IP_STORAGE.get('admin_password_hash');
   if (!storedHash) return jsonResponse({ error: '未设置密码，请先设置' }, 401);
   const inputHash = await hashPassword(password);
   if (inputHash !== storedHash) return jsonResponse({ error: '密码错误' }, 401);
-  const now = Date.now();
-  const token = btoa(now.toString());
-  const expires = new Date(now + 1 * 60 * 60 * 1000).toUTCString();
+  // 使用当前时间戳作为 token，并用 Base64 编码
+  const tokenTime = Date.now();
+  const token = btoa(String(tokenTime));
+  const expires = new Date(tokenTime + 60 * 60 * 1000).toUTCString();
   const headers = new Headers();
   headers.append('Set-Cookie', `admin_session=${token}; Path=/; Expires=${expires}; HttpOnly; Secure; SameSite=Strict`);
   headers.append('Content-Type', 'application/json');
@@ -2343,12 +2334,6 @@ async function serveHTML(env, request) {
     "Content-Type": "text/html;charset=utf-8",
     "Access-Control-Allow-Origin": "*"
   };
-  // 自动gzip如果支持
-  const acceptEncoding = request.headers.get('Accept-Encoding');
-  if (acceptEncoding && acceptEncoding.includes('gzip')) {
-    headers['Content-Encoding'] = 'gzip';
-    // 注意：在实际Worker中，需要压缩html字符串，这里简化假设浏览器处理
-  }
   return new Response(html, { headers });
 }
 /* ====================== /ip.txt 和 /ips ====================== */
@@ -2410,17 +2395,14 @@ async function handleSpeedTest(req, env) {
   const url = new URL(req.url);
   const address = url.searchParams.get("ip");
   if (!address) return jsonResponse({ error: "missing ip" }, 400);
-
   const decodedAddress = decodeURIComponent(address);
   const parsed = parseAddressWithPort(decodedAddress);
-
   // 形成 Cloudflare Resolver 的覆盖地址
   // IPv6 需要方括号包裹
   let formattedAddress = decodedAddress;
   if (parsed.type === 'ipv6' && !decodedAddress.startsWith('[')) {
     formattedAddress = `[${parsed.address}]:${parsed.port}`;
   }
-
   // 测速请求，使用 fetchWithRetry 封装，3 次尝试，逐步退避
   let latency = null;
   let latencySuccess = false;
@@ -2448,7 +2430,6 @@ async function handleSpeedTest(req, env) {
     latency = null;
     latencySuccess = false;
   }
-
   // 位置信息获取
   let location = "未知";
   try {
@@ -2494,7 +2475,6 @@ async function handleSpeedTest(req, env) {
   } catch (e) {
     // 捕获定位阶段的错误，但不影响主返回
   }
-
   return jsonResponse({
     success: latencySuccess,
     latency: latency,
