@@ -547,10 +547,13 @@ function isBlacklisted(address, blacklistPreprocessed) {
 /* ====================== 核心：更新 + 自动测速 ====================== */
 async function handleUpdate(env) {
   const startTime = Date.now();
-  const { uniqueAddresses, results, addressesWithLocation } = await updateAllAddresses(env);
-  // 从最近3个历史记录中获取已有的位置和延迟信息
-  const historicalData = await getRecentHistoryData(env, 3);
-  // 创建地址到历史数据的映射
+  // 1) 初始数据获取并行化：更新地址与最近历史数据
+  const [initial, historicalData] = await Promise.all([
+    updateAllAddresses(env),
+    getRecentHistoryData(env, 3)
+  ]);
+  const { uniqueAddresses, results, addressesWithLocation } = initial;
+  // 2) 从最近历史中构建位置/延迟的映射
   const historyMap = new Map();
   historicalData.forEach(data => {
     if (data.ips) {
@@ -564,32 +567,28 @@ async function handleUpdate(env) {
       });
     }
   });
-  // 筛选出需要测试地理位置的地址
+  // 3) 筛选出需要测试地理位置的地址与需要测试延迟的地址
   const needLocationTest = [];
   const knownLocations = new Map();
   addressesWithLocation.forEach(item => {
     const srcLoc = item.location?.trim();
-    const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？","ipv4","ipv6","ip v4","ip v6"]);  // 添加常见变体，忽略大小写已在代码中处理
+    const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？","ipv4","ipv6","ip v4","ip v6"]);
     if (srcLoc && !useless.has(srcLoc.toLowerCase()) && srcLoc.toLowerCase() !== "unknown") {
       knownLocations.set(item.address, srcLoc);
-    }
-    else {
+    } else {
       const h = historyMap.get(item.address);
       if (h?.location) {
         const loc = h.location.trim();
         if (loc && !useless.has(loc) && loc.toLowerCase() !== "unknown") {
           knownLocations.set(item.address, loc);
-        }
-        else {
+        } else {
           needLocationTest.push(item.address);
         }
-      }
-      else {
+      } else {
         needLocationTest.push(item.address);
       }
     }
   });
-  // 筛选出需要测试延迟的地址
   const needLatencyTest = [];
   const knownLatencies = new Map();
   uniqueAddresses.forEach(addr => {
@@ -603,35 +602,55 @@ async function handleUpdate(env) {
   console.log(`Total Addresses: ${uniqueAddresses.length}`);
   console.log(`Need location test: ${needLocationTest.length}`);
   console.log(`Need latency test: ${needLatencyTest.length}`);
-  // 获取新的地理位置
+  // 4) 需要测试的新地理位置与新延迟信息，采用分块-分波并发控制
+  // 并发参数（可根据实际情况调整）
+  const CHUNK_SIZE = 20; // 每次批量的地址数量
+  const MAX_WAVES = 3;   // 同时并发执行的批次数量
+  // 内部 helpers
+  async function batchInWaves(items, batchFn) {
+    if (!items || items.length === 0) return [];
+    // 将 items 分成若干块
+    const chunks = [];
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+      chunks.push(items.slice(i, i + CHUNK_SIZE));
+    }
+    // 逐波处理：每波最多 MAX_WAVES 批次并发
+    const results = [];
+    for (let i = 0; i < chunks.length; i += MAX_WAVES) {
+      const wave = chunks.slice(i, i + MAX_WAVES);
+      const promises = wave.map(chunk => batchFn(chunk).then(r => r || []));
+      const waveResults = await Promise.all(promises);
+      // 将当前波的结果按顺序拼接，保持与输入 chunk 的顺序一致
+      for (const wr of waveResults) {
+        results.push(...wr);
+      }
+    }
+    return results;
+  }
   let newLocations = [];
-  if (needLocationTest.length > 0) {
-    newLocations = await getLocationsForAddresses(needLocationTest);
-  }
-  // 获取新的延迟信息
   let newLatencies = [];
-  if (needLatencyTest.length > 0) {
-    newLatencies = await batchTestLatency(needLatencyTest);
+  if (needLocationTest.length > 0) {
+    newLocations = await batchInWaves(needLocationTest, batch => getLocationsForAddresses(batch));
   }
-  // 合并所有信息
+  if (needLatencyTest.length > 0) {
+    newLatencies = await batchInWaves(needLatencyTest, batch => batchTestLatency(batch));
+  }
+  // 5) 合并信息，保持与原有逻辑一致的映射关系
   const finalAddresses = addressesWithLocation.map(item => {
     const address = item.address;
-    let location = item.location; // 默认用 item.location（可能是提供的 #*** 或 "未知"）
+    let location = item.location; // 默认
     if (knownLocations.has(address)) {
-      location = knownLocations.get(address); // 如果是 history 的，会覆盖 "未知"；有备注时 known 就是备注，不变
+      location = knownLocations.get(address);
     } else {
       const index = needLocationTest.indexOf(address);
       if (index !== -1 && newLocations[index]) {
-        location = newLocations[index]; // 新测试的
+        location = newLocations[index];
       }
     }
     let latency = null;
-    // 如果在历史数据中找到延迟信息
     if (knownLatencies.has(address)) {
       latency = knownLatencies.get(address);
-    }
-    // 否则使用新获取的延迟信息
-    else {
+    } else {
       const index = needLatencyTest.indexOf(address);
       if (index !== -1 && newLatencies[index]?.success) {
         latency = newLatencies[index].latency;
@@ -655,7 +674,7 @@ async function handleUpdate(env) {
   console.log(`Saved timestamped ${timestampKey}`);
   // 清理旧的历史记录
   await cleanupOldIPs(env);
-  // 也保存到主键，以保证兼容性
+  // 兼容性存储
   await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(finalData));
   const duration = Date.now() - startTime;
   return jsonResponse({
