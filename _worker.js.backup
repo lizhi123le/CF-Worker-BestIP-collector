@@ -309,7 +309,7 @@ const WHITELIST_DOMAINS = [
   "xyz","hk","tw","mo","com","ch","br","eu.org","fun","fan",
   "icu","mn","in","sb","is","org","ir","app","ltd","buzz",
   "ws","net","pw","one","top","lt","cylex.hu","vip","shop",
-  "cn","us","uk","de","fr","jp","kr","sg","au","ca",
+  "cn","us","uk","de","fr","jp","kr","sg","au","ca","run",
   "it","es","ru","se","no","fi","dk","pl","cz","gr",
   "be","nl","ie","nz","mx","ar","cl","tr","sa","ae",
   "id","my","th","vn","ph","bd","pk","lk","np","il",
