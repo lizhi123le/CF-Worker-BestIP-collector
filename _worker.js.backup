@@ -209,7 +209,6 @@ function parseAddressWithPort(address) {
   if (!address) {
     return { address: '', port: "443", type: 'unknown' };
   }
-  
   let addrPart, portPart = "443";
   // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
   if (address.startsWith('[') && address.includes(']:')) {
@@ -281,7 +280,6 @@ function parseFormattedAddress(formatted) {
   if (!formatted) {
     return { address: '', location: '', latency: null, type: 'unknown' };
   }
-  
   const parts = formatted.split('#');
   const addressPart = parts[0];
   const locationPart = parts[1] || "";
@@ -356,7 +354,6 @@ function isWhitelistedDomain(domain) {
 /* ====================== 增强提取函数：支持 IPv6、白名单过滤 ====================== */
 function extractAddressesFromHTML(html) {
   if (!html) return [];
-  
   const map = new Map(); // Map<string, string | null> address => location
   // 预编译正则 (updated to support Chinese in remarks with Unicode 'gu' flag)
   const patterns = {
@@ -580,7 +577,6 @@ async function handleUpdate(env) {
     getRecentHistoryData(env, 3)
   ]);
   const { uniqueAddresses, results, addressesWithLocation } = initial;
-  
   // 2) 从最近历史中构建位置/延迟的映射
   const historyMap = new Map();
   if (historicalData && Array.isArray(historicalData)) {
@@ -603,7 +599,6 @@ async function handleUpdate(env) {
   if (addressesWithLocation && Array.isArray(addressesWithLocation)) {
     addressesWithLocation.forEach(item => {
       if (!item || !item.address) return;
-      
       const srcLoc = item.location?.trim();
       const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？","ipv4","ipv6","ip v4","ip v6"]);
       if (srcLoc && !useless.has(srcLoc.toLowerCase()) && srcLoc.toLowerCase() !== "unknown") {
@@ -639,9 +634,18 @@ async function handleUpdate(env) {
   console.log(`Total Addresses: ${uniqueAddresses ? uniqueAddresses.length : 0}`);
   console.log(`Need location test: ${needLocationTest ? needLocationTest.length : 0}`);
   console.log(`Need latency test: ${needLatencyTest ? needLatencyTest.length : 0}`);
-  // 4) 需要测试的新地理位置与新延迟信息，采用分块-分波并发控制
-  // 并发参数（可根据实际情况调整）
-  const CHUNK_SIZE = 20; // 每次批量的地址数量
+  // 4) 验证函数：检查数据是否有效
+  function isValidLocation(location) {
+    if (!location || typeof location !== 'string') return false;
+    const loc = location.trim();
+    const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？","ipv4","ipv6","ip v4","ip v6"]);
+    return loc && !useless.has(loc.toLowerCase()) && loc.toLowerCase() !== "unknown";
+  }
+  function isValidLatency(latency) {
+    return latency !== null && latency !== undefined && typeof latency === 'number' && latency > 0;
+  }
+  // 5) 需要测试的新地理位置与新延迟信息，采用分块-分波并发控制
+  const CHUNK_SIZE = 16; // 每次批量的地址数量
   const MAX_WAVES = 3;   // 同时并发执行的批次数量
   // 内部 helpers
   async function batchInWaves(items, batchFn) {
@@ -664,20 +668,80 @@ async function handleUpdate(env) {
     }
     return results;
   }
+  // 6) 简化的重试测试函数
+  async function testWithRetry(addresses, testFn, isValidFn) {
+    const stats = {
+      totalTested: addresses ? addresses.length : 0,
+      validResults: 0,
+      retryCount: 0,
+      failedCount: 0
+    };
+    if (!addresses || addresses.length === 0) {
+      return { results: [], stats: stats };
+    }
+    console.log(`Testing ${addresses.length} addresses with retry`);
+    let currentAddresses = [...addresses];
+    let finalResults = new Array(addresses.length).fill(null);
+    let attempt = 0;
+    const maxRetries = 2;
+    while (currentAddresses.length > 0 && attempt <= maxRetries) {
+      attempt++;
+      if (attempt > 1) stats.retryCount++;
+      console.log(`Attempt ${attempt}: ${currentAddresses.length} addresses`);
+      const results = await batchInWaves(currentAddresses, testFn);
+      const needRetry = [];
+      for (let i = 0; i < currentAddresses.length; i++) {
+        const address = currentAddresses[i];
+        const result = results[i];
+        const originalIndex = addresses.indexOf(address);
+        if (isValidFn(result)) {
+          finalResults[originalIndex] = result;
+          stats.validResults++;
+          console.log(`✓ ${address}: Valid`);
+        } else if (attempt < maxRetries + 1) {
+          needRetry.push(address);
+          console.log(`✗ ${address}: Retry`);
+        } else {
+          finalResults[originalIndex] = result;
+          stats.failedCount++;
+          console.log(`✗ ${address}: Failed`);
+        }
+      }
+      currentAddresses = needRetry;
+    }
+    console.log(`Test complete: Valid=${stats.validResults}, Failed=${stats.failedCount}, Retries=${stats.retryCount}`);
+    return { results: finalResults, stats: stats };
+  }
+  // 7) 执行测试
+  let locationStats = { totalTested: 0, validResults: 0, retryCount: 0, failedCount: 0 };
+  let latencyStats = { totalTested: 0, validResults: 0, retryCount: 0, failedCount: 0 };
   let newLocations = [];
   let newLatencies = [];
   if (needLocationTest && needLocationTest.length > 0) {
-    newLocations = await batchInWaves(needLocationTest, batch => getLocationsForAddresses(batch));
+    console.log(`\n=== LOCATION TESTS ===`);
+    const locationResult = await testWithRetry(
+      needLocationTest,
+      batch => getLocationsForAddresses(batch),
+      isValidLocation
+    );
+    newLocations = locationResult.results;
+    locationStats = locationResult.stats;
   }
   if (needLatencyTest && needLatencyTest.length > 0) {
-    newLatencies = await batchInWaves(needLatencyTest, batch => batchTestLatency(batch));
+    console.log(`\n=== LATENCY TESTS ===`);
+    const latencyResult = await testWithRetry(
+      needLatencyTest,
+      batch => batchTestLatency(batch),
+      result => result && result.success && isValidLatency(result.latency)
+    );
+    newLatencies = latencyResult.results;
+    latencyStats = latencyResult.stats;
   }
-  // 5) 合并信息，保持与原有逻辑一致的映射关系
+  // 8) 合并信息，保持与原有逻辑一致的映射关系
   const finalAddresses = [];
   if (addressesWithLocation && Array.isArray(addressesWithLocation)) {
     addressesWithLocation.forEach(item => {
       if (!item || !item.address) return;
-      
       const address = item.address;
       let location = item.location; // 默认
       if (knownLocations.has(address)) {
@@ -719,16 +783,33 @@ async function handleUpdate(env) {
   // 兼容性存储
   await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(finalData));
   const duration = Date.now() - startTime;
-  return jsonResponse({
+  // 9) 构建返回数据 - 强制显示重试统计
+  const response = {
     success: true,
     message: "更新并测速完成",
     duration: `${duration}ms`,
     totalIPs: uniqueAddresses ? uniqueAddresses.length : 0,
     newLocationTested: needLocationTest ? needLocationTest.length : 0,
     newLatencyTested: needLatencyTest ? needLatencyTest.length : 0,
+    validLocations: locationStats.validResults,
+    validLatencies: latencyStats.validResults,
+    // 强制显示重试统计
+    locationRetryCount: locationStats.retryCount,
+    locationFailedCount: locationStats.failedCount,
+    latencyRetryCount: latencyStats.retryCount,
+    latencyFailedCount: latencyStats.failedCount,
     timestamp: now.toISOString(),
     historyKey: timestampKey
-  });
+  };
+  // 调试日志
+  console.log(`\n=== RESPONSE DEBUG ===`);
+  console.log(`Location retry count: ${locationStats.retryCount}`);
+  console.log(`Location failed count: ${locationStats.failedCount}`);
+  console.log(`Latency retry count: ${latencyStats.retryCount}`);
+  console.log(`Latency failed count: ${latencyStats.failedCount}`);
+  console.log(`Response keys:`, Object.keys(response));
+  console.log(`===================\n`);
+  return jsonResponse(response);
 }
 /* ====================== 从最近历史记录获取数据 ====================== */
 async function getRecentHistoryData(env, limit = 3) {
@@ -769,7 +850,6 @@ async function updateAllAddresses(env) {
   const blacklistRaw = await getBlacklist(env);
   const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
   const uniqueAddressesMap = new Map(); // Map<string, string | null> address => location
-  
   for (let i = 0; i < urls.length; i += 3) {
     const batch = urls.slice(i, i + 3);
     const settled = await Promise.allSettled(batch.map(u => fetchURLWithTimeout(u)));
@@ -833,7 +913,6 @@ async function updateAllAddresses(env) {
 // 增强地理位置获取，处理 IPv4、IPv6 和域名
 async function getLocationsForAddresses(addresses) {
   if (!addresses || addresses.length === 0) return [];
-  
   const batchSize = 39;
   const locs = new Array(addresses.length).fill("未知");
   // 初始：域名默认回退到域名本身
@@ -847,7 +926,6 @@ async function getLocationsForAddresses(addresses) {
   const ipv4Addresses = [], ipv4Indices = [];
   const ipv6Addresses = [], ipv6Indices = [];
   const domainAddresses = [], domainIndices = [];
-  
   addresses.forEach((addr, idx) => {
     if (!addr) return;
     const parsed = parseAddressWithPort(addr);
@@ -988,7 +1066,6 @@ async function testIPLatency(addressWithPort, timeout = 10000) {
   if (!addressWithPort) {
     return { success: false, latency: null };
   }
-  
   let attempts = 0;
   const maxAttempts = 1;
   let formattedAddress = addressWithPort;
@@ -996,7 +1073,6 @@ async function testIPLatency(addressWithPort, timeout = 10000) {
   if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
     formattedAddress = `[${parsed.address}]:${parsed.port}`;
   }
-  
   while (attempts < maxAttempts) {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), timeout);
@@ -1025,7 +1101,6 @@ async function testIPLatency(addressWithPort, timeout = 10000) {
 }
 async function batchTestLatency(addresses, concurrency = 4) {
   if (!addresses || addresses.length === 0) return [];
-  
   const results = new Array(addresses.length);
   for (let i = 0; i < addresses.length; i += concurrency) {
     const batch = addresses.slice(i, i + concurrency);
@@ -1063,12 +1138,10 @@ async function cleanupOldIPs(env) {
     items.push(...list.keys);
     cursor = list.cursor;
   } while (cursor);
-  
   if (items.length <= MIN_KEEP_COUNT) {
     console.log("[清理] 记录太少，无需清理");
     return;
   }
-  
   // 第二步：真正读取每个 value 的字节长度（这是唯一可靠的方法）
   const details = [];
   for (const key of items) {
@@ -1084,12 +1157,10 @@ async function cleanupOldIPs(env) {
       console.warn(`读取 ${key.name} 失败，跳过:`, e);
     }
   }
-  
   // 按时间倒序（新→旧）
   details.sort((a, b) => b.date - a.date);
   const toDelete = new Set();
   let totalSize = details.reduce((sum, i) => sum + i.size, 0);
-  
   // 阶段1：删除超龄的（但保留最新 MIN_KEEP_COUNT 条）
   for (let i = MIN_KEEP_COUNT; i < details.length; i++) {
     if (details[i].date.getTime() < now - MAX_AGE_MS) {
@@ -1097,7 +1168,6 @@ async function cleanupOldIPs(env) {
       totalSize -= details[i].size;
     }
   }
-  
   // 阶段2：如果还超总大小，继续删最旧的（绝不删前 MIN_KEEP_COUNT 条）
   for (let i = details.length - 1; i >= MIN_KEEP_COUNT; i--) {
     if (totalSize <= MAX_TOTAL_SIZE) break;
@@ -1106,7 +1176,6 @@ async function cleanupOldIPs(env) {
       totalSize -= details[i].size;
     }
   }
-  
   if (toDelete.size > 0) {
     console.log(`[清理] 即将删除 ${toDelete.size} 条历史记录，释放约 ${Math.round((details.reduce((s, i) => s + i.size, 0) - totalSize) / 1024)} KB`);
     // 批量删除（KV 支持一次性最多 10,000 个，够用了）
@@ -1212,7 +1281,6 @@ async function getAllUniqueIPCount(env) {
     list.keys.forEach(key => allKeys.push(key));
     cursor = list.cursor;
   } while (cursor);
-  
   // 批量获取值（分批以避免内存峰值）
   const BATCH_SIZE = 10; // 每个批次处理10个键
   for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
@@ -1256,7 +1324,6 @@ async function getIPsWithFallback(env, limit = null) {
   const latest = historicalData[0]; // 最新一批
   const result = [];
   const addressSet = new Set();
-  
   // Step 1: 处理最新批次
   let latestIPs = (latest.ips || [])
     .filter(item => item && item.address && !isBlacklisted(item.address, blacklistPreprocessed));
@@ -1267,7 +1334,6 @@ async function getIPsWithFallback(env, limit = null) {
     return latA - latB; 
   });
   const latestCount = latestIPs.length;
-  
   // 如果 limit 为 null 或 <= 0，视为"显示最新全部"
   if (!limit || limit <= 0) {
     latestIPs.forEach(item => {
@@ -1293,7 +1359,6 @@ async function getIPsWithFallback(env, limit = null) {
       }
     });
   }
-  
   // Step 2: 如果还需要补足（limit > latestCount 且 limit > 0）
   if (limit > 0 && result.length < limit) {
     const need = limit - result.length;
@@ -1317,7 +1382,6 @@ async function getIPsWithFallback(env, limit = null) {
       }
     }
   }
-  
   return {
     ips: result,
     count: result.length,
@@ -1408,14 +1472,12 @@ async function serveHTML(env, request) {
   const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
   const customPath = await getCustomPath(env);
   const displayData = await getIPsWithFallback(env, limit);
-  
   // 确保显示数据中的每个IP都有位置信息
   if (displayData.ips && Array.isArray(displayData.ips)) {
     displayData.ips.forEach(ip => {
       if (ip && !ip.location) ip.location = "未知";
     });
   }
-  
   const data = {
     ...latest,
     limit,
@@ -1428,13 +1490,11 @@ async function serveHTML(env, request) {
     originalCount: displayData.originalCount || 0,
     adminStatus
   };
-  
   const ipsHref = data.customPath ? '/' + data.customPath + '/ips' : '/ips';
   const ipTxtHref = data.customPath ? '/' + data.customPath + '/ip.txt' : '/ip.txt';
   const showSetPassword = !data.adminStatus.hasPassword;
   const showLogin = data.adminStatus.hasPassword && !data.adminStatus.isLoggedIn;
   const showAdminButton = data.adminStatus.isLoggedIn;
-  
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1768,7 +1828,6 @@ async function serveHTML(env, request) {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
         }
-        
         function simpleHash(str) {
           if (!str) return '';
           let hash = 0;
@@ -1777,13 +1836,11 @@ async function serveHTML(env, request) {
           }
           return (hash >>> 0).toString(36);
         }
-        
         // 管理员相关
         function toggleAdminDropdown() {
             const dropdown = document.getElementById('admin-dropdown');
             if (dropdown) dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
         }
-        
         async function setAdminPassword() {
             const input = document.getElementById('set-password-input');
             if (!input || input.value.length < 4) return alert('密码至少4位');
@@ -1803,7 +1860,6 @@ async function serveHTML(env, request) {
                 alert('设置失败: ' + error.message);
             }
         }
-        
         async function loginAdmin() {
             const input = document.getElementById('login-password-input');
             if (!input || !input.value) return alert('请输入密码');
@@ -1823,12 +1879,10 @@ async function serveHTML(env, request) {
                 alert('登录失败: ' + error.message);
             }
         }
-        
         function closeAdminOverlay() {
             const overlay = document.getElementById('admin-overlay');
             if (overlay) overlay.style.display = 'none';
         }
-        
         async function handleLogout() {
             try {
                 await fetch('/admin-logout', { method: 'POST' });
@@ -1837,7 +1891,6 @@ async function serveHTML(env, request) {
                 alert('登出失败: ' + error.message);
             }
         }
-        
         // 解析地址类型
         function parseAddressWithPort(address) {
           if (!address) {
@@ -1892,7 +1945,6 @@ async function serveHTML(env, request) {
           }
           return { address: pure, port: "443", type: 'unknown' };
         }
-        
         // 格式化地址输出
         function formatAddressOutput(address, location, latency) {
           if (!address) return '';
@@ -1912,14 +1964,12 @@ async function serveHTML(env, request) {
             return parsed.address + portPart + '#' + displayLocation + (latencyPart ? '_' + latencyPart : '');
           }
         }
-        
         let speedResults = {};
         let isTesting = false;
         let currentTestIndex = 0;
         let currentSourcesUrls = ${JSON.stringify(data.sources_urls || []).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')};
         let currentBlacklist = ${JSON.stringify(data.blacklist || []).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')};
         let currentPath = '${data.customPath}';
-        
         function showMessage(message, type) {
             if (type === undefined) type = 'success';
             const result = document.getElementById('result');
@@ -1931,7 +1981,6 @@ async function serveHTML(env, request) {
                 result.style.display = 'none';
             }, 3000);
         }
-        
         function updateLinks() {
             const pathPart = currentPath ? '/' + currentPath : '';
             const downloadLink = document.querySelector('a[href*="/ips"]');
@@ -1943,7 +1992,6 @@ async function serveHTML(env, request) {
                 viewLink.href = pathPart + '/ip.txt';
             }
         }
-        
         function openPathModal() {
             const modal = document.getElementById('path-modal');
             const input = document.getElementById('path-input');
@@ -1951,12 +1999,10 @@ async function serveHTML(env, request) {
             input.value = currentPath;
             modal.style.display = 'flex';
         }
-        
         function closePathModal() {
             const modal = document.getElementById('path-modal');
             if (modal) modal.style.display = 'none';
         }
-        
         async function savePath() {
             const input = document.getElementById('path-input');
             if (!input) return;
@@ -1982,7 +2028,6 @@ async function serveHTML(env, request) {
                 showMessage('设置失败: ' + error.message, 'error');
             }
         }
-        
         function copyIP(address, location, latency) {
             let text = formatAddressOutput(address, location, latency);
             navigator.clipboard.writeText(text).then(function() {
@@ -1992,7 +2037,6 @@ async function serveHTML(env, request) {
                 showMessage('复制失败', 'error');
             });
         }
-        
         function copyAllIPs() {
             const ipItems = document.querySelectorAll('.ip-item');
             if (!ipItems.length) return showMessage('没有可复制的地址', 'error');
@@ -2012,7 +2056,6 @@ async function serveHTML(env, request) {
                 showMessage('复制失败', 'error');
             });
         }
-        
         async function testSingleIP(address) {
             const item = document.querySelector('[data-ip="' + CSS.escape(address) + '"]');
             if (!item) return showMessage('未找到地址元素', 'error');
@@ -2079,7 +2122,6 @@ async function serveHTML(env, request) {
                 void speedElement.offsetHeight;
             }
         }
-        
         async function startSpeedTest() {
             if (isTesting) return showMessage('测速正在进行中，请稍候...', 'error');
             const ipItems = Array.from(document.querySelectorAll('.ip-item'));
@@ -2184,7 +2226,6 @@ async function serveHTML(env, request) {
             sortBySpeed();
             showMessage('测速完成，已测试 ' + currentTestIndex + ' 个地址，已按延迟排序');
         }
-        
         function sortBySpeed() {
             const ipList = document.getElementById('ip-list');
             if (!ipList) return;
@@ -2209,7 +2250,7 @@ async function serveHTML(env, request) {
               if (item && ipList) ipList.appendChild(item);
             });
         }
-        
+        // 替换原有的 updateIPs 函数（修复版本）
         async function updateIPs() {
             const btn = document.getElementById('update-btn');
             const loading = document.getElementById('loading');
@@ -2222,25 +2263,129 @@ async function serveHTML(env, request) {
                 const response = await fetch('/update', { method: 'POST' });
                 const data = await response.json();
                 if (data.success) {
-                    result.className = 'result success';
-                    result.innerHTML = '<h3> 更新成功！</h3><p>耗时: ' + escapeHtml(data.duration) + '</p><p>本次唯一 地址: ' + escapeHtml(data.totalIPs) + '</p><p>新位置测试: ' + escapeHtml(data.newLocationTested) + '</p><p>新延迟测试: ' + escapeHtml(data.newLatencyTested) + '</p><p>历史键: ' + escapeHtml(data.historyKey || '—') + '</p><p>时间: ' + new Date(data.timestamp).toLocaleString() + '</p>';
+                    // 定义样式类
+                    const cardStyle = 'background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6;';
+                    const titleStyle = 'font-weight: 600; color: #1e40af; margin-bottom: 4px;';
+                    const gridStyle = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0;';
+                    const retryGridStyle = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0;';
+                    const sectionTitleStyle = 'margin: 16px 0 12px 0; color: #1e40af;';
+                    const infoStyle = 'margin-top: 16px; padding: 12px; background: #f1f5f9; border-radius: 8px;';
+                    const infoTextStyle = 'font-size: 0.9rem; color: #64748b;';
+                    const codeStyle = 'background: #e2e8f0; padding: 2px 6px; border-radius: 4px;';
+                    
+                    // 构建详细的结果显示
+                    let resultHtml = '<h3>✅ 更新成功！</h3>';
+                    resultHtml += '<div style="' + gridStyle + '">';
+                    
+                    // 基础统计 - 耗时
+                    resultHtml += '<div style="' + cardStyle + '">';
+                    resultHtml += '<div style="' + titleStyle + '">⏱️ 耗时</div>';
+                    resultHtml += '<div>' + escapeHtml(data.duration) + '</div>';
+                    resultHtml += '</div>';
+                    
+                    // 基础统计 - 总地址数
+                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
+                    resultHtml += '<div style="font-weight: 600; color: #059669; margin-bottom: 4px;">🌐 总地址数</div>';
+                    resultHtml += '<div>' + escapeHtml(data.totalIPs) + '</div>';
+                    resultHtml += '</div>';
+                    
+                    // 基础统计 - 新位置测试
+                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
+                    resultHtml += '<div style="font-weight: 600; color: #d97706; margin-bottom: 4px;">📍 新位置测试</div>';
+                    resultHtml += '<div>' + escapeHtml(data.newLocationTested) + '</div>';
+                    resultHtml += '</div>';
+                    
+                    // 基础统计 - 新延迟测试
+                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #8b5cf6;">';
+                    resultHtml += '<div style="font-weight: 600; color: #7c3aed; margin-bottom: 4px;">⚡ 新延迟测试</div>';
+                    resultHtml += '<div>' + escapeHtml(data.newLatencyTested) + '</div>';
+                    resultHtml += '</div>';
+                    
+                    resultHtml += '</div>';
+                    
+                    // 重试统计（新增）
+                    if (data.locationRetryCount !== undefined || data.latencyRetryCount !== undefined) {
+                        resultHtml += '<h4 style="' + sectionTitleStyle + '">🔄 重试统计</h4>';
+                        resultHtml += '<div style="' + retryGridStyle + '">';
+                        
+                        if (data.locationRetryCount !== undefined) {
+                            resultHtml += '<div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
+                            resultHtml += '<div style="font-weight: 600; color: #d97706; margin-bottom: 4px;">📍 位置重试次数</div>';
+                            resultHtml += '<div>' + escapeHtml(data.locationRetryCount) + ' 次</div>';
+                            resultHtml += '</div>';
+                        }
+                        
+                        if (data.locationFailedCount !== undefined) {
+                            resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
+                            resultHtml += '<div style="font-weight: 600; color: #dc2626; margin-bottom: 4px;">❌ 位置失败数量</div>';
+                            resultHtml += '<div>' + escapeHtml(data.locationFailedCount) + ' 个</div>';
+                            resultHtml += '</div>';
+                        }
+                        
+                        if (data.latencyRetryCount !== undefined) {
+                            resultHtml += '<div style="background: #e0f2fe; padding: 12px; border-radius: 8px; border-left: 4px solid #0ea5e9;">';
+                            resultHtml += '<div style="font-weight: 600; color: #0284c7; margin-bottom: 4px;">⚡ 延迟重试次数</div>';
+                            resultHtml += '<div>' + escapeHtml(data.latencyRetryCount) + ' 次</div>';
+                            resultHtml += '</div>';
+                        }
+                        
+                        if (data.latencyFailedCount !== undefined) {
+                            resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
+                            resultHtml += '<div style="font-weight: 600; color: #dc2626; margin-bottom: 4px;">❌ 延迟失败数量</div>';
+                            resultHtml += '<div>' + escapeHtml(data.latencyFailedCount) + ' 个</div>';
+                            resultHtml += '</div>';
+                        }
+                        
+                        resultHtml += '</div>';
+                    }
+                    
+                    // 有效结果统计
+                    if (data.validLocations !== undefined || data.validLatencies !== undefined) {
+                        resultHtml += '<h4 style="margin: 16px 0 12px 0; color: #059669;">✅ 有效结果</h4>';
+                        resultHtml += '<div style="' + retryGridStyle + '">';
+                        
+                        if (data.validLocations !== undefined) {
+                            resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
+                            resultHtml += '<div style="font-weight: 600; color: #059669; margin-bottom: 4px;">📍 有效位置</div>';
+                            resultHtml += '<div>' + escapeHtml(data.validLocations) + ' 个</div>';
+                            resultHtml += '</div>';
+                        }
+                        
+                        if (data.validLatencies !== undefined) {
+                            resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
+                            resultHtml += '<div style="font-weight: 600; color: #059669; margin-bottom: 4px;">⚡ 有效延迟</div>';
+                            resultHtml += '<div>' + escapeHtml(data.validLatencies) + ' 个</div>';
+                            resultHtml += '</div>';
+                        }
+                        
+                        resultHtml += '</div>';
+                    }
+                    
+                    // 其他信息
+                    resultHtml += '<div style="' + infoStyle + '">';
+                    resultHtml += '<div style="' + infoTextStyle + '">';
+                    resultHtml += '<div>📅 历史键: <code style="' + codeStyle + '">' + escapeHtml(data.historyKey || '—') + '</code></div>';
+                    resultHtml += '<div>🕐 时间: ' + new Date(data.timestamp).toLocaleString() + '</div>';
+                    resultHtml += '</div>';
+                    resultHtml += '</div>';
+                    
+                    result.innerHTML = resultHtml;
                 } else {
                     result.className = 'result error';
-                    result.innerHTML = '<h3> 更新失败</h3><p>' + escapeHtml(data.error || '未知错误') + '</p>';
+                    result.innerHTML = '<h3>❌ 更新失败</h3><p>' + escapeHtml(data.error || '未知错误') + '</p>';
                 }
                 result.style.display = 'block';
                 setTimeout(refreshData, 1500);
             } catch (error) {
                 console.error('更新失败:', error);
                 result.className = 'result error';
-                result.innerHTML = '<h3> 请求失败</h3><p>' + escapeHtml(error.message) + '</p>';
+                result.innerHTML = '<h3>❌ 请求失败</h3><p>' + escapeHtml(error.message) + '</p>';
                 result.style.display = 'block';
             } finally {
                 btn.disabled = false;
                 loading.style.display = 'none';
             }
         }
-        
         async function setIpLimit() {
             const input = document.getElementById('ip-limit-input');
             const btn = document.getElementById('set-limit-btn');
@@ -2289,7 +2434,6 @@ async function serveHTML(env, request) {
             input.placeholder = 'IP数量';
             input.focus();
         }
-        
         function openSourcesModal() {
             const modal = document.getElementById('sources-modal');
             const textarea = document.getElementById('sources-textarea');
@@ -2297,12 +2441,10 @@ async function serveHTML(env, request) {
             textarea.value = currentSourcesUrls.join('\\n');
             modal.style.display = 'flex';
         }
-        
         function closeSourcesModal() {
             const modal = document.getElementById('sources-modal');
             if (modal) modal.style.display = 'none';
         }
-        
         async function saveSources() {
             const textarea = document.getElementById('sources-textarea');
             if (!textarea) return;
@@ -2326,7 +2468,6 @@ async function serveHTML(env, request) {
                 showMessage('设置失败: ' + error.message, 'error');
             }
         }
-        
         function openBlacklistModal() {
             const modal = document.getElementById('blacklist-modal');
             const textarea = document.getElementById('blacklist-textarea');
@@ -2334,12 +2475,10 @@ async function serveHTML(env, request) {
             textarea.value = currentBlacklist.join('\\n');
             modal.style.display = 'flex';
         }
-        
         function closeBlacklistModal() {
             const modal = document.getElementById('blacklist-modal');
             if (modal) modal.style.display = 'none';
         }
-        
         async function saveBlacklist() {
             const textarea = document.getElementById('blacklist-textarea');
             if (!textarea) return;
@@ -2363,7 +2502,6 @@ async function serveHTML(env, request) {
                 showMessage('设置失败: ' + error.message, 'error');
             }
         }
-        
         async function refreshData() {
             try {
                 const response = await fetch('/raw');
@@ -2512,7 +2650,6 @@ async function serveHTML(env, request) {
                 showMessage('刷新数据失败: ' + e.message, 'error');
             }
         }
-        
         document.addEventListener('DOMContentLoaded', function() {
             // 添加全局错误处理
             window.onerror = function(message, source, lineno, colno, error) {
