@@ -109,22 +109,19 @@ function parseTimestampKey(key) {
 // IPv6 验证 - 增强版
 function isValidIPv6(ip) {
   if (!ip || typeof ip !== 'string') return false;
-  // 去除可能的方括号
-  const cleanIP = ip.replace(/^\[|\]$/g, '');
-  // 更完整的IPv6格式验证
-  const ipv6Pattern = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,7}:$|^(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}$|^(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}$|^(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}$|^[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})$|^:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)$/;
-  if (!ipv6Pattern.test(cleanIP)) return false;
-  // 检查是否有效的 IPv6 地址
-  const segments = cleanIP.split(':').filter(Boolean);
-  const hasDoubleColon = cleanIP.includes('::');
-  if (hasDoubleColon) {
-    // 压缩格式
-    const maxSegments = 8;
-    const actualSegments = segments.length;
-    return actualSegments <= maxSegments;
-  } else {
-    // 完整格式
-    return segments.length === 8;
+  
+  // 使用更简单可靠的IPv6验证
+  try {
+    // 移除可能的方括号
+    const cleanIP = ip.replace(/^\[|\]$/g, '');
+    // 基本格式检查
+    if (!/^[\da-fA-F:]+$/.test(cleanIP)) return false;
+    // 使用URL API进行验证
+    const testUrl = `http://[${cleanIP}]`;
+    new URL(testUrl);
+    return true;
+  } catch {
+    return false;
   }
 }
 // IPv4 验证
@@ -209,49 +206,39 @@ function parseAddressWithPort(address) {
   if (!address) {
     return { address: '', port: "443", type: 'unknown' };
   }
-  let addrPart, portPart = "443";
-  // 处理 IPv6 带端口的情况，如 [2001:db8::1]:443
+  // 优先检查IPv6带方括号的情况
   if (address.startsWith('[') && address.includes(']:')) {
     const ipv6End = address.indexOf(']');
-    addrPart = address.substring(1, ipv6End);
-    portPart = address.substring(ipv6End + 2) || "443";
-    if (!isValidIPv6(addrPart)) return { address: address, port: "443", type: 'unknown' };
-    return { address: addrPart, port: portPart, type: 'ipv6' };
-  } else if (address.startsWith('[') && address.endsWith(']')) {  // 处理 [ipv6] 无端口的情况
-    addrPart = address.substring(1, address.length - 1);
-    if (!isValidIPv6(addrPart)) return { address: address, port: "443", type: 'unknown' };
-    return { address: addrPart, port: "443", type: 'ipv6' };
+    const ipv6 = address.substring(1, ipv6End);
+    const port = address.substring(ipv6End + 2);
+    return isValidIPv6(ipv6) ? 
+      { address: ipv6, port: port || "443", type: 'ipv6' } :
+      { address: address, port: "443", type: 'unknown' };
   }
-  // 处理常规地址
+  // 检查IPv6不带方括号（但包含多个冒号）
   const parts = address.split(':');
-  // IPv6 地址没有端口 (没有方括号)
-  if (parts.length > 2 && !address.includes('[')) {
-    if (!isValidIPv6(address)) return { address: address, port: "443", type: 'unknown' };
-    return { address: address, port: "443", type: 'ipv6' };
+  if (parts.length > 2 && !address.includes('.')) {
+    return isValidIPv6(address) ? 
+      { address: address, port: "443", type: 'ipv6' } :
+      { address: address, port: "443", type: 'unknown' };
   }
-  // 单纯域名或IPv4/IPv6无端口
-  if (parts.length === 1) {
-    addrPart = parts[0];
-    const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
-    if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
-    return {
-      address: addrPart.replace(/[\[\]]/g, ''),
-      port: "443",
-      type: type
-    };
-  }
-  // 域名:port 或 IPv4:port
+  // 处理域名:端口 或 IPv4:端口
   if (parts.length === 2) {
-    addrPart = parts[0];
-    portPart = parts[1];
-    if (!isValidPort(portPart)) return { address: address, port: "443", type: 'unknown' };
-    const type = isValidIPv4(addrPart) ? 'ipv4' : (isValidIPv6(addrPart) ? 'ipv6' : (isValidDomain(addrPart) ? 'domain' : 'unknown'));
-    if (type === 'unknown') return { address: address, port: "443", type: 'unknown' };
-    return {
-      address: addrPart.replace(/[\[\]]/g, ''),
-      port: portPart,
-      type: type
-    };
+    const addrPart = parts[0];
+    const portPart = parts[1];
+    if (isValidIPv4(addrPart)) {
+      return { address: addrPart, port: portPart || "443", type: 'ipv4' };
+    }
+    if (isValidDomain(addrPart)) {
+      return { address: addrPart, port: portPart || "443", type: 'domain' };
+    }
+  }
+  // 处理纯地址（无端口）
+  if (isValidIPv4(address)) {
+    return { address: address, port: "443", type: 'ipv4' };
+  }
+  if (isValidDomain(address)) {
+    return { address: address, port: "443", type: 'domain' };
   }
   return { address: address, port: "443", type: 'unknown' };
 }
@@ -1282,7 +1269,7 @@ async function getAllUniqueIPCount(env) {
     cursor = list.cursor;
   } while (cursor);
   // 批量获取值（分批以避免内存峰值）
-  const BATCH_SIZE = 10; // 每个批次处理10个键
+  const BATCH_SIZE = 50; // 每个批次处理50个键
   for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
     const batchKeys = allKeys.slice(i, i + BATCH_SIZE);
     const batchResults = await batchGetKV(env, batchKeys);
@@ -1893,9 +1880,6 @@ async function serveHTML(env, request) {
         }
         // 解析地址类型
         function parseAddressWithPort(address) {
-          if (!address) {
-            return { address: '', port: "443", type: 'unknown' };
-          }
           const pure = address.split('#')[0].trim();
           const isIPv4Lite = v => {
             const octets = v.split('.');
@@ -2063,13 +2047,11 @@ async function serveHTML(env, request) {
             const speedElement = item.querySelector('.speed-result');
             const addressElement = item.querySelector('.ip-address');
             if (!addressElement) return;
-            
             // 关键：从当前文本里提取类型角标（纯文本版）
             let typeBadgeText = '';
             if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
             else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
             else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
-            
             // 根据类型生成完整的带样式的角标 HTML
             let typeBadge = '';
             if (typeBadgeText === 'IPv6') {
@@ -2079,7 +2061,6 @@ async function serveHTML(env, request) {
             } else if (typeBadgeText === '域名') {
                 typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
             }
-            
             if (!testBtn || !speedElement || !addressElement) return showMessage('元素缺失，无法测速', 'error');
             testBtn.disabled = true;
             testBtn.textContent = '测试中...';
@@ -2146,7 +2127,6 @@ async function serveHTML(env, request) {
                 if (btn) btn.disabled = true;
             });
             for (let i = 0; i < totalIPs; i++) {
-                if (!isTesting) break;
                 const ipItem = ipItems[i];
                 const address = ipItem.dataset.ip;
                 if (!address) continue;
@@ -2160,13 +2140,11 @@ async function serveHTML(env, request) {
                     const speedElement = ipItem.querySelector('.speed-result');
                     const addressElement = ipItem.querySelector('.ip-address');
                     if (!addressElement) return;
-                    
                     // 关键：从当前文本里提取类型角标（纯文本版）
                     let typeBadgeText = '';
                     if (addressElement.textContent.includes('IPv6')) typeBadgeText = 'IPv6';
                     else if (addressElement.textContent.includes('IPv4')) typeBadgeText = 'IPv4';
                     else if (addressElement.textContent.includes('域名')) typeBadgeText = '域名';
-                    
                     // 根据类型生成完整的带样式的角标 HTML
                     let typeBadge = '';
                     if (typeBadgeText === 'IPv6') {
@@ -2176,7 +2154,6 @@ async function serveHTML(env, request) {
                     } else if (typeBadgeText === '域名') {
                         typeBadge = '<span style="background:#f59e0b;color:white;padding:2px 6px;border-radius:4px;font-size:0.8rem;margin-left:8px;">域名</span>';
                     }
-                    
                     if (data.success) {
                         const rounded = Math.round(latency);
                         const speedClass = rounded < 200 ? 'speed-fast' : rounded < 500 ? 'speed-medium' : 'speed-slow';
@@ -2263,112 +2240,75 @@ async function serveHTML(env, request) {
                 const response = await fetch('/update', { method: 'POST' });
                 const data = await response.json();
                 if (data.success) {
-                    // 定义样式类
-                    const cardStyle = 'background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6;';
-                    const titleStyle = 'font-weight: 600; color: #1e40af; margin-bottom: 4px;';
-                    const gridStyle = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0;';
-                    const retryGridStyle = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0;';
-                    const sectionTitleStyle = 'margin: 16px 0 12px 0; color: #1e40af;';
-                    const infoStyle = 'margin-top: 16px; padding: 12px; background: #f1f5f9; border-radius: 8px;';
-                    const infoTextStyle = 'font-size: 0.9rem; color: #64748b;';
-                    const codeStyle = 'background: #e2e8f0; padding: 2px 6px; border-radius: 4px;';
-                    
-                    // 构建详细的结果显示
+                    // 构建你要求的两列布局格式
                     let resultHtml = '<h3>✅ 更新成功！</h3>';
-                    resultHtml += '<div style="' + gridStyle + '">';
-                    
-                    // 基础统计 - 耗时
-                    resultHtml += '<div style="' + cardStyle + '">';
-                    resultHtml += '<div style="' + titleStyle + '">⏱️ 耗时</div>';
-                    resultHtml += '<div>' + escapeHtml(data.duration) + '</div>';
+                    // 创建两列布局容器
+                    resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0;">';
+                    // 左列
+                    resultHtml += '<div style="display: flex; flex-direction: column; gap: 8px;">';
+                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6;">';
+                    resultHtml += '<div style="font-weight: 600; color: #1e40af;">⏱️ 耗时：' + escapeHtml(data.duration) + '</div>';
                     resultHtml += '</div>';
-                    
-                    // 基础统计 - 总地址数
                     resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                    resultHtml += '<div style="font-weight: 600; color: #059669; margin-bottom: 4px;">🌐 总地址数</div>';
-                    resultHtml += '<div>' + escapeHtml(data.totalIPs) + '</div>';
+                    resultHtml += '<div style="font-weight: 600; color: #059669;">🌐 总地址数：' + escapeHtml(data.totalIPs) + '</div>';
                     resultHtml += '</div>';
-                    
-                    // 基础统计 - 新位置测试
                     resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
-                    resultHtml += '<div style="font-weight: 600; color: #d97706; margin-bottom: 4px;">📍 新位置测试</div>';
-                    resultHtml += '<div>' + escapeHtml(data.newLocationTested) + '</div>';
+                    resultHtml += '<div style="font-weight: 600; color: #d97706;">📍 新位置测试：' + escapeHtml(data.newLocationTested) + '</div>';
                     resultHtml += '</div>';
-                    
-                    // 基础统计 - 新延迟测试
                     resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #8b5cf6;">';
-                    resultHtml += '<div style="font-weight: 600; color: #7c3aed; margin-bottom: 4px;">⚡ 新延迟测试</div>';
-                    resultHtml += '<div>' + escapeHtml(data.newLatencyTested) + '</div>';
+                    resultHtml += '<div style="font-weight: 600; color: #7c3aed;">⚡ 新延迟测试：' + escapeHtml(data.newLatencyTested) + '</div>';
                     resultHtml += '</div>';
-                    
                     resultHtml += '</div>';
-                    
-                    // 重试统计（新增）
-                    if (data.locationRetryCount !== undefined || data.latencyRetryCount !== undefined) {
-                        resultHtml += '<h4 style="' + sectionTitleStyle + '">🔄 重试统计</h4>';
-                        resultHtml += '<div style="' + retryGridStyle + '">';
-                        
-                        if (data.locationRetryCount !== undefined) {
-                            resultHtml += '<div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
-                            resultHtml += '<div style="font-weight: 600; color: #d97706; margin-bottom: 4px;">📍 位置重试次数</div>';
-                            resultHtml += '<div>' + escapeHtml(data.locationRetryCount) + ' 次</div>';
-                            resultHtml += '</div>';
-                        }
-                        
-                        if (data.locationFailedCount !== undefined) {
-                            resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
-                            resultHtml += '<div style="font-weight: 600; color: #dc2626; margin-bottom: 4px;">❌ 位置失败数量</div>';
-                            resultHtml += '<div>' + escapeHtml(data.locationFailedCount) + ' 个</div>';
-                            resultHtml += '</div>';
-                        }
-                        
-                        if (data.latencyRetryCount !== undefined) {
-                            resultHtml += '<div style="background: #e0f2fe; padding: 12px; border-radius: 8px; border-left: 4px solid #0ea5e9;">';
-                            resultHtml += '<div style="font-weight: 600; color: #0284c7; margin-bottom: 4px;">⚡ 延迟重试次数</div>';
-                            resultHtml += '<div>' + escapeHtml(data.latencyRetryCount) + ' 次</div>';
-                            resultHtml += '</div>';
-                        }
-                        
-                        if (data.latencyFailedCount !== undefined) {
-                            resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
-                            resultHtml += '<div style="font-weight: 600; color: #dc2626; margin-bottom: 4px;">❌ 延迟失败数量</div>';
-                            resultHtml += '<div>' + escapeHtml(data.latencyFailedCount) + ' 个</div>';
-                            resultHtml += '</div>';
-                        }
-                        
+                    // 右列
+                    resultHtml += '<div style="display: flex; flex-direction: column; gap: 8px;">';
+                    if (data.locationFailedCount !== undefined) {
+                        resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
+                        resultHtml += '<div style="font-weight: 600; color: #dc2626;">❌ 位置失败数量：' + escapeHtml(data.locationFailedCount) + '</div>';
                         resultHtml += '</div>';
                     }
-                    
-                    // 有效结果统计
+                    if (data.locationRetryCount !== undefined) {
+                        resultHtml += '<div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
+                        resultHtml += '<div style="font-weight: 600; color: #d97706;">📍 位置重试次数：' + escapeHtml(data.locationRetryCount) + '</div>';
+                        resultHtml += '</div>';
+                    }
+                    if (data.latencyFailedCount !== undefined) {
+                        resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
+                        resultHtml += '<div style="font-weight: 600; color: #dc2626;">❌ 延迟失败数量：' + escapeHtml(data.latencyFailedCount) + '</div>';
+                        resultHtml += '</div>';
+                    }
+                    if (data.latencyRetryCount !== undefined) {
+                        resultHtml += '<div style="background: #e0f2fe; padding: 12px; border-radius: 8px; border-left: 4px solid #0ea5e9;">';
+                        resultHtml += '<div style="font-weight: 600; color: #0284c7;">⚡ 延迟重试次数：' + escapeHtml(data.latencyRetryCount) + '</div>';
+                        resultHtml += '</div>';
+                    }
+                    resultHtml += '</div>';
+                    resultHtml += '</div>';
+                    // 有效结果统计（如果有）
                     if (data.validLocations !== undefined || data.validLatencies !== undefined) {
                         resultHtml += '<h4 style="margin: 16px 0 12px 0; color: #059669;">✅ 有效结果</h4>';
-                        resultHtml += '<div style="' + retryGridStyle + '">';
+                        resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">';
                         
                         if (data.validLocations !== undefined) {
                             resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                            resultHtml += '<div style="font-weight: 600; color: #059669; margin-bottom: 4px;">📍 有效位置</div>';
-                            resultHtml += '<div>' + escapeHtml(data.validLocations) + ' 个</div>';
+                            resultHtml += '<div style="font-weight: 600; color: #059669;">📍 有效位置：' + escapeHtml(data.validLocations) + '</div>';
                             resultHtml += '</div>';
                         }
                         
                         if (data.validLatencies !== undefined) {
                             resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                            resultHtml += '<div style="font-weight: 600; color: #059669; margin-bottom: 4px;">⚡ 有效延迟</div>';
-                            resultHtml += '<div>' + escapeHtml(data.validLatencies) + ' 个</div>';
+                            resultHtml += '<div style="font-weight: 600; color: #059669;">⚡ 有效延迟：' + escapeHtml(data.validLatencies) + '</div>';
                             resultHtml += '</div>';
                         }
                         
                         resultHtml += '</div>';
                     }
-                    
                     // 其他信息
-                    resultHtml += '<div style="' + infoStyle + '">';
-                    resultHtml += '<div style="' + infoTextStyle + '">';
-                    resultHtml += '<div>📅 历史键: <code style="' + codeStyle + '">' + escapeHtml(data.historyKey || '—') + '</code></div>';
+                    resultHtml += '<div style="margin-top: 16px; padding: 12px; background: #f1f5f9; border-radius: 8px;">';
+                    resultHtml += '<div style="font-size: 0.9rem; color: #64748b;">';
+                    resultHtml += '<div>📅 历史键: <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">' + escapeHtml(data.historyKey || '—') + '</code></div>';
                     resultHtml += '<div>🕐 时间: ' + new Date(data.timestamp).toLocaleString() + '</div>';
                     resultHtml += '</div>';
                     resultHtml += '</div>';
-                    
                     result.innerHTML = resultHtml;
                 } else {
                     result.className = 'result error';
@@ -2513,7 +2453,6 @@ async function serveHTML(env, request) {
                 if (recentCountEl) recentCountEl.textContent = data.originalCount || 0;
                 if (totalCountEl) totalCountEl.textContent = (data.totalUniqueIPs || 0).toLocaleString();
                 if (lastTimeEl) lastTimeEl.textContent = data.lastUpdated ? new Date(data.lastUpdated).toLocaleTimeString() : '从未更新';
-                
                 // 更新IP列表
                 const ipList = document.getElementById('ip-list');
                 const displayIPs = data.ips || [];
@@ -2587,7 +2526,6 @@ async function serveHTML(env, request) {
                         ipList.innerHTML = '<p style="text-align: center; color: #64748b; padding: 40px;">暂无 IP/域名 地址数据，请点击更新按钮获取</p>';
                     }
                 }
-                
                 // 更新来源
                 currentSourcesUrls = data.sources_urls || [];
                 const sources = document.getElementById('sources');
@@ -2623,7 +2561,6 @@ async function serveHTML(env, request) {
                         sources.innerHTML = '<p style="color: #64748b;">暂无数据来源信息</p>';
                     }
                 }
-                
                 // 更新黑名单
                 currentBlacklist = data.blacklist || [];
                 // 更新路径
