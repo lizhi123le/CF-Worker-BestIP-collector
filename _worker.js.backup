@@ -253,7 +253,10 @@ function formatAddressOutput(address, location, latency) {
     displayLocation = parsed.type.toUpperCase();  // IPv4 或 IPv6
   }
   if (parsed.type === 'ipv6') {
-    return `[${parsed.address}]${portPart}#${displayLocation}${latencyPart}`;
+    // Check if address already has brackets
+    const hasBrackets = parsed.address.startsWith('[') && parsed.address.endsWith(']');
+    const ipv6Address = hasBrackets ? parsed.address : `[${parsed.address}]`;
+    return `${ipv6Address}${portPart}#${displayLocation}${latencyPart}`;
   } else if (parsed.type === 'domain') {
     const loc = displayLocation && displayLocation !== "未知" ? displayLocation : parsed.address;  // 域名不变
     return `${parsed.address}${portPart}#${loc}${latencyPart}`;
