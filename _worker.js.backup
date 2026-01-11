@@ -632,7 +632,7 @@ async function handleUpdate(env) {
     return latency !== null && latency !== undefined && typeof latency === 'number' && latency > 0;
   }
   // 5) 需要测试的新地理位置与新延迟信息，采用分块-分波并发控制
-  const CHUNK_SIZE = 16; // 每次批量的地址数量
+  const CHUNK_SIZE = 18; // 每次批量的地址数量
   const MAX_WAVES = 3;   // 同时并发执行的批次数量
   // 内部 helpers
   async function batchInWaves(items, batchFn) {
@@ -670,7 +670,7 @@ async function handleUpdate(env) {
     let currentAddresses = [...addresses];
     let finalResults = new Array(addresses.length).fill(null);
     let attempt = 0;
-    const maxRetries = 2;
+    const maxRetries = 1;
     while (currentAddresses.length > 0 && attempt <= maxRetries) {
       attempt++;
       if (attempt > 1) stats.retryCount++;
@@ -1259,7 +1259,7 @@ async function getAllUniqueIPCount(env) {
   const blacklistRaw = await getBlacklist(env);
   const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
   const allIPs = new Set();
-  const LIST_LIMIT = 500; // 优化：减小limit，分页处理以避免单次list过多
+  const LIST_LIMIT = 522; // 优化：减小limit，分页处理以避免单次list过多
   let cursor = null;
   const allKeys = [];
   // 分页收集所有键
@@ -1269,7 +1269,7 @@ async function getAllUniqueIPCount(env) {
     cursor = list.cursor;
   } while (cursor);
   // 批量获取值（分批以避免内存峰值）
-  const BATCH_SIZE = 50; // 每个批次处理50个键
+  const BATCH_SIZE = 52; // 每个批次处理52个键
   for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
     const batchKeys = allKeys.slice(i, i + BATCH_SIZE);
     const batchResults = await batchGetKV(env, batchKeys);
