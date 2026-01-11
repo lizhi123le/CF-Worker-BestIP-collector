@@ -673,7 +673,7 @@ async function handleUpdate(env) {
     let currentAddresses = [...addresses];
     let finalResults = new Array(addresses.length).fill(null);
     let attempt = 0;
-    const maxRetries = 1;
+    const maxRetries = 2;
     while (currentAddresses.length > 0 && attempt <= maxRetries) {
       attempt++;
       if (attempt > 1) stats.retryCount++;
@@ -999,7 +999,7 @@ async function getLocationsForAddresses(addresses) {
         if (k + 1 < batchIps.length) await new Promise(r => setTimeout(r, 1100));
       }
     }
-    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1000));
+    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1100));
   }
   // 域名 DoH + 国家代码
   const domainBatchSize = 4;
