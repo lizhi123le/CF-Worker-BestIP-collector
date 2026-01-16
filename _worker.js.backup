@@ -610,9 +610,9 @@ async function handleUpdate(env) {
   const startTime = Date.now();
   // 指数退避配置
   const RETRY_CONFIG = {
-    initialDelay: [1000, 1200],    // 初始延迟范围：1-1.5秒
-    maxDelay: [5000, 8000],       // 最大延迟范围：8-10秒
-    backoffFactor: [1.2, 2.2],        // 退避因子范围：1.5-2.5倍
+    initialDelay: [1000, 1200],    // 初始延迟范围：1-1.2秒
+    maxDelay: [5000, 8000],       // 最大延迟范围：5-8秒
+    backoffFactor: [1.2, 2.2],        // 退避因子范围：1.2-2.2倍
     maxRetries: 2,                // 最大重试次数
     jitter: true                  // 启用抖动，避免雷群效应
   };
@@ -1880,7 +1880,7 @@ async function serveHTML(env, request) {
           </div>
         <div class="footer">
 			<p>
-				<img src="/favicon.png" style="width: 15px; height: 15px; vertical-align: middle; margin-right: 3px; transform: translateY(-1px);" title="logo" />
+				<img src="/favicon.png" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 2px; transform: translateY(-2px);" title="logo" />
 				Cloudflare IP/域名 Collector © ${new Date().getFullYear()} | 增强版：完美支持 IPv6 和域名
 			</p>
 		</div>
