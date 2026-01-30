@@ -3725,6 +3725,15 @@ async function serveHTML(env, request) {
   };
   return new Response(html, { headers });
 }
+/* ====================== IPv6 地址规范化 ====================== */
+// IPv6 地址规范化函数 - 只移除方括号，保持原始格式
+function normalizeIPv6Address(ip) {
+  if (!ip || typeof ip !== 'string') return ip;
+
+  // 只移除方括号，保持地址原始格式（压缩或完整格式）
+  return ip.replace(/[\[\]]/g, '');
+}
+
 /* ====================== /ip.txt 和 /ips ====================== */
 async function handleGetIPs(env, attachment = false) {
   const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
@@ -3831,7 +3840,9 @@ async function handleSpeedTest(req, env) {
       }
     } else if (parsed.type === 'ipv6') {
       // IPv6：ipinfo
-      const r = await fetchWithRetry(`https://ipinfo.io/${parsed.address}/json`, {}, 2, 1000);
+      // 在 API 调用前规范化 IPv6 地址
+      const normalizedIp = normalizeIPv6Address(parsed.address);
+      const r = await fetchWithRetry(`https://ipinfo.io/${normalizedIp}/json`, {}, 2, 1000);
       if (r.ok) {
         const data = await r.json();
         if (data?.country) location = data.country + "_IPv6";
