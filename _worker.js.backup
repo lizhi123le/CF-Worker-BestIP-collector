@@ -3729,11 +3729,9 @@ async function serveHTML(env, request) {
 // IPv6 地址规范化函数 - 只移除方括号，保持原始格式
 function normalizeIPv6Address(ip) {
   if (!ip || typeof ip !== 'string') return ip;
-
   // 只移除方括号，保持地址原始格式（压缩或完整格式）
   return ip.replace(/[\[\]]/g, '');
 }
-
 /* ====================== /ip.txt 和 /ips ====================== */
 async function handleGetIPs(env, attachment = false) {
   const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
