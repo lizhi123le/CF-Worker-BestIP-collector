@@ -165,7 +165,7 @@ function calculateDynamicBatchSize(addressType, stats, baseSize) {
     return dynamicChunkSize;
 }
 // 增强的批处理函数，带成功率统计（添加地址级统计支持）
-async function batchInWavesWithStats(items, batchFn, addressType) {
+async function batchInWavesWithStats(items, batchFn, addressType, env) {
     if (!items || items.length === 0) return [];
     // 获取当前成功率统计
     const stats = await getSuccessStats(env);
@@ -1661,31 +1661,7 @@ async function getLocationsForAddresses(addresses, env) {
       : 0;
     console.log(`[统计更新] ${addressType}: 地址成功率 ${typeStats.successfulAddresses}/${typeStats.totalAddresses} (${successRate}%)`);
   }
-// 获取默认批次大小（新增）
-  function getDefaultBatchSize(addressType) {
-    switch (addressType) {
-      case 'ipv4': return 20;
-      case 'ipv6': return 1;
-      case 'domain': return 3;
-      default: return 3;
-    }
-  }
-  // 计算成功率（新增）
-  function calculateSuccessRate(stats, addressType) {
-    const typeStats = stats[addressType];
-    if (!typeStats || typeStats.totalAddresses === 0) return 0;
-    return (typeStats.successfulAddresses / typeStats.totalAddresses * 100).toFixed(1);
-  }
-  // 获取默认批次大小（新增）
-  function getDefaultBatchSize(addressType) {
-    switch (addressType) {
-      case 'ipv4': return 20;
-      case 'ipv6': return 1;  // IPv6 每批只处理单个地址，因为API不支持批量测试  // IPv6 每批只处理单个地址，因为API不支持批量测试
-      case 'domain': return 3;
-      default: return 3;
-    }
-  }
-  // 增强的批处理函数，带地址级别的成功率统计（修改版）
+// 增强的批处理函数，带地址级别的成功率统计（修改版）
   async function batchInWavesWithStats(items, batchFn, addressType) {
     if (!items || items.length === 0) return [];
     // 获取当前成功率统计
