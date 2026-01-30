@@ -79,6 +79,223 @@ async function handleFavicon() {
     }
   }
 }
+// 常量定义
+const SUCCESS_STATS_KEY = "batch_success_stats";
+const MAX_BATCH_SIZE = 31;
+const MIN_BATCH_SIZE = 1;
+const SUCCESS_HISTORY_LENGTH = 10;
+const MAX_WAVES = 1; // 从2降至1，进一步减少并发压力
+  // 获取默认批次大小
+  function getDefaultBatchSize(addressType) {
+    switch (addressType) {
+      case 'ipv4': return 20;  // 从29降至20，减少并发压力
+      case 'ipv6': return 1;    // IPv6 每批只处理单个地址，因为API不支持批量测试
+      case 'domain': return 3;   // 从4降至3，减少API调用
+      default: return 3;         // 从5降至3
+    }
+  }
+// 初始化成功率统计对象（添加地址级统计）
+function initializeSuccessStats() {
+    return {
+        ipv4: {
+            totalAddresses: 0,        // 新增：总地址数
+            successfulAddresses: 0,    // 新增：成功地址数
+            totalBatches: 0,
+            successfulBatches: 0,
+            avgBatchSize: 20,
+            lastUpdated: new Date().toISOString(),
+            recentSuccess: []
+        },
+        ipv6: {
+            totalAddresses: 0,
+            successfulAddresses: 0,
+            totalBatches: 0,
+            successfulBatches: 0,
+            avgBatchSize: 1,
+            lastUpdated: new Date().toISOString(),
+            recentSuccess: []
+        },
+        domain: {
+            totalAddresses: 0,
+            successfulAddresses: 0,
+            totalBatches: 0,
+            successfulBatches: 0,
+            avgBatchSize: 3,
+            lastUpdated: new Date().toISOString(),
+            recentSuccess: []
+        }
+    };
+}
+// 动态批次大小计算函数（使用地址级成功率）
+function calculateDynamicBatchSize(addressType, stats, baseSize) {
+    const typeStats = stats[addressType];
+    // 检查是否有足够的地址数据（优先使用地址级统计）
+    if (!typeStats || (typeStats.totalAddresses === undefined || typeStats.totalAddresses < 10)) {
+        // 地址数据不足时的日志
+        console.log(`[批处理优化] ${addressType}: 地址数据不足（${typeStats?.totalAddresses || 0} < 10），使用默认批次大小=${baseSize}`);
+        return baseSize;
+    }
+    // 计算地址成功率
+    const recentSuccessRate = typeStats.recentSuccess.length > 0
+        ? typeStats.recentSuccess.filter(s => s).length / typeStats.recentSuccess.length
+        : 0;
+    const overallSuccessRate = typeStats.totalAddresses > 0
+        ? (typeStats.successfulAddresses / typeStats.totalAddresses)
+        : 0;
+    // 综合成功率（最近成功率权重更高）
+    const combinedSuccessRate = recentSuccessRate * 0.7 + overallSuccessRate * 0.3;
+    // 动态调整策略
+    let adjustmentFactor = 1.0;
+    if (combinedSuccessRate > 0.9) {
+        adjustmentFactor = 1.2 + (combinedSuccessRate - 0.9) * 2;
+    } else if (combinedSuccessRate > 0.7) {
+        adjustmentFactor = 1.0;
+    } else if (combinedSuccessRate > 0.5) {
+        adjustmentFactor = 0.8 - (0.7 - combinedSuccessRate);
+    } else {
+        adjustmentFactor = 0.5;
+    }
+    // 应用调整因子，并限制在合理范围内
+    const adjustedSize = Math.round(baseSize * adjustmentFactor);
+    // IPv6 强制限制为每批1个地址，因为API不支持批量测试
+    const minSize = addressType === 'ipv4' ? 5 : addressType === 'ipv6' ? 1 : 2; // 从8降至5
+    const maxSize = addressType === 'ipv4' ? 40 : addressType === 'ipv6' ? 1 : 10; // 从64/16降至40/10
+    const dynamicChunkSize = Math.max(minSize, Math.min(maxSize, adjustedSize));
+	console.log(`[批处理优化] ${addressType}: 基础大小=${baseSize}, 调整后=${dynamicChunkSize}, 成功率=${(combinedSuccessRate * 100).toFixed(2)}%, 调整因子=${adjustmentFactor.toFixed(2)}`);
+    return dynamicChunkSize;
+}
+// 增强的批处理函数，带成功率统计（添加地址级统计支持）
+async function batchInWavesWithStats(items, batchFn, addressType) {
+    if (!items || items.length === 0) return [];
+    // 获取当前成功率统计
+    const stats = await getSuccessStats(env);
+    const baseSize = getDefaultBatchSize(addressType);
+    const dynamicChunkSize = calculateDynamicBatchSize(addressType, stats, baseSize);
+    console.log(`[批处理优化] ${addressType}: 基础大小=${baseSize}, 调整后=${dynamicChunkSize}`);
+    // 分块处理
+    const chunks = [];
+    for (let i = 0; i < items.length; i += dynamicChunkSize) {
+        chunks.push(items.slice(i, i + dynamicChunkSize));
+    }
+    // 逐波处理
+    const results = [];
+    const batchResults = [];
+    for (let i = 0; i < chunks.length; i += MAX_WAVES) {
+        const wave = chunks.slice(i, i + MAX_WAVES);
+        const promises = wave.map(async (chunk, waveIndex) => {
+            try {
+                const startTime = Date.now();
+                const result = await batchFn(chunk);
+                const duration = Date.now() - startTime;
+                // 检查 result 是否是地址数组格式（包含 success 字段的对象数组）
+                const isAddressArrayFormat = Array.isArray(result) && result.length > 0 &&
+                    result[0] && typeof result[0] === 'object' && 'success' in result[0];
+                if (isAddressArrayFormat) {
+                    // 地址数组格式：记录每个地址的结果
+                    const hasAnySuccess = result.some(r => r && r.success);
+                    batchResults.push({
+                        addressType,
+                        success: hasAnySuccess,
+                        batchSize: chunk.length,
+                        addresses: result, // 每个地址的查询结果
+                        duration,
+                        timestamp: new Date().toISOString()
+                    });
+                } else {
+                    // 旧格式：记录批次级别的成功状态
+                    batchResults.push({
+                        addressType,
+                        success: true,
+                        batchSize: chunk.length,
+                        duration,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+                return result || [];
+            } catch (error) {
+                // 记录失败的批次
+                batchResults.push({
+                    addressType,
+                    success: false,
+                    batchSize: chunk.length,
+                    error: error.message,
+                    timestamp: new Date().toISOString()
+                });
+                console.error(`[批次失败] ${addressType} 批次大小 ${chunk.length}:`, error);
+                return [];
+            }
+        });
+        const waveResults = await Promise.all(promises);
+        waveResults.forEach(wr => results.push(...wr));
+        // 波次间延迟
+        if (i + MAX_WAVES < chunks.length) {
+            await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 980));
+        }
+    }
+    // 更新成功率统计
+    await updateSuccessStats(env, addressType, batchResults);
+    return results;
+}
+// 获取成功率统计
+async function getSuccessStats(env) {
+    const raw = await env.IP_STORAGE.get(SUCCESS_STATS_KEY);
+    if (!raw) {
+        return initializeSuccessStats();
+    }
+    try {
+        return JSON.parse(raw);
+    } catch (e) {
+        console.warn('解析成功率统计失败，使用默认值:', e);
+        return initializeSuccessStats();
+    }
+}
+// 更新成功率统计（添加地址级统计）
+async function updateSuccessStats(env, addressType, batchResults) {
+    const stats = await getSuccessStats(env);
+    const typeStats = stats[addressType];
+    // 更新总体统计（批次级别）
+    batchResults.forEach(result => {
+        typeStats.totalBatches++;
+        if (result.success) {
+            typeStats.successfulBatches++;
+        }
+    });
+    // 更新地址级统计（如果有 addresses 数组）
+    let totalAddresses = 0;
+    let successfulAddresses = 0;
+    batchResults.forEach(result => {
+        if (result.addresses && Array.isArray(result.addresses)) {
+            result.addresses.forEach(addrResult => {
+                totalAddresses++;
+                if (addrResult.success) {
+                    successfulAddresses++;
+                }
+                // 更新最近成功状态（保持最近 100 个地址）
+                typeStats.recentSuccess.push(addrResult.success);
+                if (typeStats.recentSuccess.length > 100) {
+                    typeStats.recentSuccess.shift();
+                }
+            });
+        } else {
+            // 兼容旧版本：没有 addresses 数组时，使用批次级别的成功状态
+            typeStats.recentSuccess.push(result.success);
+            if (typeStats.recentSuccess.length > 10) {
+                typeStats.recentSuccess.shift();
+            }
+        }
+    });
+    // 更新地址总数统计
+    typeStats.totalAddresses = (typeStats.totalAddresses || 0) + totalAddresses;
+    typeStats.successfulAddresses = (typeStats.successfulAddresses || 0) + successfulAddresses;
+    // 更新平均批次大小
+    typeStats.avgBatchSize = batchResults.reduce((sum, r) => sum + r.batchSize, 0) / batchResults.length;
+    typeStats.lastUpdated = new Date().toISOString();
+    // 保存到 KV
+    await env.IP_STORAGE.put(SUCCESS_STATS_KEY, JSON.stringify(stats));
+    const batchSuccessRate = typeStats.totalBatches > 0 ? ((typeStats.successfulBatches / typeStats.totalBatches) * 100).toFixed(1) : 0;
+    const addressSuccessRate = typeStats.totalAddresses > 0 ? ((typeStats.successfulAddresses / typeStats.totalAddresses) * 100).toFixed(1) : 0;
+    console.log(`[统计更新] ${addressType}: 批次成功率 ${typeStats.successfulBatches}/${typeStats.totalBatches} (${batchSuccessRate}%) | 地址成功率 ${typeStats.successfulAddresses}/${typeStats.totalAddresses} (${addressSuccessRate}%)`);
+}
 /* ====================== 公共工具升级 ====================== */
 // HTML转义函数，防止XSS攻击
 function escapeHtml(text) {
@@ -184,7 +401,22 @@ function isValidIPv4(ip) {
 // 域名验证
 function isValidDomain(domain) {
   if (!domain || typeof domain !== 'string') return false;
-  // 基本域名格式检查
+  // 支持以星号(*)开头的通配符域名，如 *.example.com
+  if (domain.startsWith('*.')) {
+    // 移除 *. 前缀后验证剩余部分
+    const remainingDomain = domain.substring(2);
+    if (!remainingDomain) return false;
+    // 验证剩余域名部分
+    if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(remainingDomain)) return false;
+    // 禁止纯数字域名
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(remainingDomain)) return false;
+    // 禁止以点开头或结尾
+    if (remainingDomain.startsWith('.') || remainingDomain.endsWith('.')) return false;
+    // 不能只包含数字和点
+    if (/^[0-9.]+$/.test(remainingDomain)) return false;
+    return true;
+  }
+  // 常规域名格式检查
   if (!/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(domain)) return false;
   // 禁止纯数字域名
   if (/^\d+\.\d+\.\d+\.\d+$/.test(domain)) return false;
@@ -382,25 +614,201 @@ function isWhitelistedDomain(domain) {
   if (!domain || typeof domain !== 'string') return false;
   const d = domain.toLowerCase().trim().replace(/^\.+|\.+$/g, '');
   if (!d) return false;
+  // 处理通配符域名 (*.example.com)
+  if (d.startsWith('*.')) {
+    // 对于通配符域名，只验证其基础部分的后缀
+    const baseDomain = d.substring(2); // 移除 *.
+    for (const suffix of WHITELIST_SUFFIXES) {
+      if (baseDomain === suffix || baseDomain.endsWith('.' + suffix)) return true;
+    }
+    return false;
+  }
+  // 常规域名后缀检查
   for (const suffix of WHITELIST_SUFFIXES) {
     // 直接命中后缀，或作为完整域名匹配
     if (d === suffix || d.endsWith('.' + suffix)) return true;
   }
   return false;
 }
-/* ====================== 增强提取函数：支持 IPv6、白名单过滤 ====================== */
-function extractAddressesFromHTML(html) {
+/* ====================== 增强提取函数：支持 IPv6、白名单过滤、线路名称抓取 ====================== */
+// 线路名称关键词映射（用于识别和提取线路信息）
+const LINE_NAME_KEYWORDS = [
+  // 运营商线路
+  "电信", "联通", "移动", "多线", "CMCC", "CT", "CU", 
+  // 地区代码
+  "HK", "JP", "SG", "US", "KR", "GB", "FR", "DE", "TW",
+  "HK", "SG", "JP", "KR", "US", "TW", "MO",
+  // 通用线路名称
+  "优选", "线路", "高速", "稳定", "低延迟",
+  // 数据中心
+  "Colo", "数据中心", "机房",
+  // IPv6标记
+  "IPV6", "IPv6"
+];
+// 判断来源格式类型（所有来源都识别处理）
+function detectSourceFormat(html, url) {
+  if (!html || !url) return null;
+  // 检测是否为表格格式（包含表格标签且有IP地址）
+  const hasTableTag = /<table|<tr[^>]*>.*?<td/i.test(html);
+  const hasIPInTable = hasTableTag && /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(html);
+  if (hasTableTag && hasIPInTable) {
+    return 'table';
+  }
+  // 检测是否为文本格式（行格式 地址#后缀）
+  const hasHashFormat = /[a-zA-Z0-9.:]+\s*#[^\n<]+/.test(html);
+  const lineCount = html.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).length;
+  if (hasHashFormat && lineCount > 0) {
+    return 'text';
+  }
+  // 对于纯IP列表的文本
+  const ipLines = html.split('\n').filter(l => /^\s*\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(l.trim()));
+  if (ipLines.length > 3) {
+    return 'text';
+  }
+  return null;
+}
+// 从yx.txt格式提取（域名/IP#线路名称）
+function extractFromIPDBFormat(html) {
+  const results = [];
+  const lines = html.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    // 匹配格式：地址#后缀
+    const hashIndex = trimmed.indexOf('#');
+    if (hashIndex > 0) {
+      const address = trimmed.substring(0, hashIndex).trim();
+      const suffix = trimmed.substring(hashIndex + 1).trim();
+      if (isValidAddressWithPort(address)) {
+        // 完整保留后缀，不过滤
+        let location = suffix || null;
+        // 如果后缀是ipv4/ipv6等技术标识，使用域名作为后缀
+        if (location && /^(ipv4|ipv6|ip|addr|address)$/i.test(location)) {
+          location = address.split(':')[0]; // 使用域名/IP本身
+        }
+        results.push({ address, location });
+      }
+    } else if (isValidAddressWithPort(trimmed)) {
+      // 没有#标记的纯地址，location保持null
+      // formatAddressOutput会自动处理：IP→IPv4/IPv6类型，域名→域名本身
+      results.push({ address: trimmed, location: null });
+    }
+  }
+  return results;
+}
+// 从表格页面提取域名（表格中的 cname/域名列）
+function extractFromWeTestCname(html) {
+  const results = [];
+  const seen = new Set();
+  // 匹配表格行中的域名（*.domain.com 或 domain.com），可能带 # 后缀
+  const domainPattern = /<td[^>]*>\s*([*a-zA-Z0-9._-]+\.(?:xyz|top|com|org|net|cc|vip|eu\.org|icu|fun|fan|app|ltd|cloud)(?:#[^<]*))?\s*<\/td>/gi;
+  let domainMatch;
+  while ((domainMatch = domainPattern.exec(html)) !== null) {
+    let fullText = domainMatch[1].trim();
+    if (!fullText) continue;
+    // 解析域名和可能的 # 后缀
+    const hashIndex = fullText.indexOf('#');
+    let address = fullText;
+    let location = null;
+    if (hashIndex > 0) {
+      address = fullText.substring(0, hashIndex).trim();
+      location = fullText.substring(hashIndex + 1).trim(); // 完整抓取 # 后的内容
+    }
+    const cleanDomain = address.replace('*.', '');
+    if (isValidDomain(cleanDomain) && !seen.has(address)) {
+      seen.add(address);
+      // 兜底策略：如果没有后缀则使用域名本身
+      const finalLocation = location || cleanDomain;
+      results.push({ address, location: finalLocation });
+    }
+  }
+  return results;
+}
+// 从api.uouin.com cloudflare页面提取（表格格式：线路+IP）
+function extractFromUouinCloudflare(html) {
+  const results = [];
+  // 清洗HTML，移除多余的标签和换行
+  const cleanHtml = html
+    .replace(/<td[^>]*>\s*<\/td>/gi, '') // 移除空单元格
+    .replace(/\s+/g, ' '); // 合并空白
+  // 匹配表格行，包含线路和IP
+  // 模式：序号、线路名称、IP地址
+  const rowPattern = /<tr[^>]*>.*?<td[^>]*>\s*\d+\s*<\/td>\s*<td[^>]*>\s*([^<]+?)\s*<\/td>\s*<td[^>]*>\s*([^<]+?)\s*<\/td>/gi;
+  let rowMatch;
+  while ((rowMatch = rowPattern.exec(cleanHtml)) !== null) {
+    const lineName = rowMatch[1].trim();
+    const ip = rowMatch[2].trim();
+    // 验证线路名称（电信、联通、移动、多线、IPV6等）
+    const validLines = ['电信', '联通', '移动', '多线', 'IPV6', 'IPv6', 'ipv6'];
+    const isValidLine = validLines.some(l => lineName.includes(l)) || 
+                        /^(电信|联通|移动|多线|IPV6)$/i.test(lineName);
+    // 验证IP地址
+    const isValidIP = isValidIPv4(ip) || isValidIPv6(ip) || 
+                      /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip) ||
+                      /^(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(ip);
+    if (isValidLine && isValidIP) {
+      results.push({ address: ip, location: lineName });
+    }
+  }
+  // 如果表格提取失败，尝试更宽松的模式
+  if (results.length === 0) {
+    // 直接匹配线路名称后跟IP的模式
+    const loosePattern = /(电信|联通|移动|多线|IPV6)[^\d]*((?:\d{1,3}\.){3}\d{1,3}|[0-9a-fA-F:]+(?::[0-9a-fA-F]{1,4}){2,7})/gi;
+    let looseMatch;
+    while ((looseMatch = loosePattern.exec(html)) !== null) {
+      const lineName = looseMatch[1];
+      const ip = looseMatch[2];
+      if (isValidIPv4(ip) || isValidIPv6(ip)) {
+        results.push({ address: ip, location: lineName });
+      }
+    }
+  }
+  return results;
+}
+// 增强的提取函数：支持特定网站线路名称抓取
+function extractAddressesFromHTML(html, sourceUrl = null) {
   if (!html) return [];
   const map = new Map(); // Map<string, string | null> address => location
+  // 检测来源格式类型（所有来源都识别处理）
+  const sourceFormat = detectSourceFormat(html, sourceUrl);
+  // 根据格式类型使用对应的专用提取器
+  if (sourceFormat) {
+    console.log(`[线路抓取] 检测到来源格式: ${sourceFormat}, URL: ${sourceUrl}`);
+    let specialResults = [];
+    switch (sourceFormat) {
+      case 'text':
+        specialResults = extractFromIPDBFormat(html);
+        break;
+      case 'table':
+        // 表格格式：先尝试提取域名（cname页面），再尝试提取IP
+        const cnameResults = extractFromWeTestCname(html);
+        if (cnameResults.length > 0) {
+          specialResults = cnameResults;
+        } else {
+          specialResults = extractFromUouinCloudflare(html);
+        }
+        break;
+    }
+    if (specialResults.length > 0) {
+      console.log(`[线路抓取] 从 ${sourceFormat} 格式提取到 ${specialResults.length} 条记录`);
+      for (const item of specialResults) {
+        if (item && item.address && !map.has(item.address)) {
+          map.set(item.address, item.location);
+        }
+      }
+    }
+  }
   // 预编译正则 (updated to support Chinese in remarks with Unicode 'gu' flag)
   const patterns = {
     ipv6WithBrackets: /\[([0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7}(?:::[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){0,7})?)\](?::\d{1,5})?(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     plainIpv6: /([0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){2,7})(?::\d{1,5})?/g,
-    domainWithHash: /[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+    domainWithHash: /(?:\*\.|[a-zA-Z0-9])(?:[a-zA-Z0-9*-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(?::\d{1,5})?(?:\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
     keyword: new RegExp(`(?:${KEYWORDS.join("|")})[\\s\\S]*?([\\w*.\\-\\[\\]:]+\\d*)`, "gi"),
     attr: new RegExp(`(?:data-label|title|alt|placeholder)=["'][^"']*?(?:${KEYWORDS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("|")})[^"']*?([a-zA-Z0-9*.\\[\\]:\\-]+)["']`, "gi"),
-    backup: /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g,
-    combined: /(?:(?:\[[\w:]+(?::\d{1,5})?\])|(?:[\w.-]+(?::\d{1,5})?)|(?:[0-9a-fA-F:]+(?::\d{1,5})?)|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?))(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu
+    backup: /(?:\[(?:[0-9a-fA-F:]+)\](?::\d{1,5})?|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{0,4}(?::\d{1,5})?\b|\b(?:\*\.|[a-zA-Z0-9])(?:[a-zA-Z0-9*-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z]{2,})+(?::\d{1,5})?\b)/g,
+    combined: /(?:(?:\[[\w:]+(?::\d{1,5})?\])|(?:[\w.*-]+(?::\d{1,5})?)|(?:[0-9a-fA-F:]+(?::\d{1,5})?)|(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d{1,5})?))(\s*#[\w\p{Script=Han}\p{Script=Latin}\d.\-_%]+)?/gu,
+    // 新增：专门匹配线路名称的正则
+    lineName: /#\s*([^_\s]+(?:线路|优选|高速|稳定|低延迟|数据中心|Colo)?)/u
   };
   // 单一pass合并提取所有候选
   let combinedMatch;
@@ -408,18 +816,19 @@ function extractAddressesFromHTML(html) {
     let candidate = combinedMatch[0];
     let addr = candidate;
     let loc = null;
-    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1; // Use search to find # with possible space
+    const hashIndex = candidate.search(/\s*#/) !== -1 ? candidate.search(/\s*#/) : -1;
     if (hashIndex !== -1) {
-      addr = candidate.substring(0, hashIndex).trim(); // Trim to remove spaces
-      const rest = candidate.substring(hashIndex + 1).trim(); // Trim rest
+      addr = candidate.substring(0, hashIndex).trim();
+      const rest = candidate.substring(hashIndex + 1).trim();
       loc = rest.replace(/^#/, '').split('_')[0];
       if (loc && (loc.toLowerCase() === 'ipv4' || loc.toLowerCase() === 'ipv6')) {
-        loc = null;  // 视为未知，触发后续逻辑
+        loc = null;
       }
     }
     if (isValidAddressWithPort(addr)) {
       const parsed = parseAddressWithPort(addr);
       if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
+      // 特殊源已经有位置信息，保留原始信息
       if (!map.has(addr)) {
         map.set(addr, loc);
       }
@@ -428,21 +837,17 @@ function extractAddressesFromHTML(html) {
   // ipv6WithBrackets
   let ipv6Match;
   while ((ipv6Match = patterns.ipv6WithBrackets.exec(html)) !== null) {
-    const fullMatch = ipv6Match[0];           // 例如: [2606:4700::1234]:8443#SG
-    const ipInside = ipv6Match[1];            // 例如: 2606:4700::1234
-    const remarkPart = ipv6Match[2] || '';    // 例如:  #SG_123ms
-    // 提取端口（如果有）
+    const fullMatch = ipv6Match[0];
+    const ipInside = ipv6Match[1];
+    const remarkPart = ipv6Match[2] || '';
     const portMatch = fullMatch.match(/]:(\d{1,5})/);
     const portStr = portMatch ? ':' + portMatch[1] : '';
-    // 提取位置备注
     let loc = null;
     if (remarkPart) {
       loc = remarkPart.trim().replace(/^#/, '').split('_')[0].trim();
       if (loc) loc += '_IPv6';
     }
-    // 标准格式：[ipv6]:port
     const standardAddr = `[${ipInside}]${portStr}`;
-    // 严格校验
     if (isValidIPv6(ipInside)) {
       if (!map.has(standardAddr)) {
         map.set(standardAddr, loc);
@@ -464,11 +869,11 @@ function extractAddressesFromHTML(html) {
     }
     const portMatch = addr.match(/:(\d{1,5})$/);
     const portStr = portMatch ? ':' + portMatch[1] : '';
-    const cleanIp = addr.replace(/:\d+$/, '').replace(/[\[\]]/g, ''); 
+    const cleanIp = addr.replace(/:\d+$/, '').replace(/[\[\]]/g, '');
     if (!isValidIPv6(cleanIp)) continue;
     const standardAddr = `[${cleanIp}]${portStr}`;
     const contextStart = Math.max(0, plainIpv6Match.index - 15);
-    const contextEnd   = plainIpv6Match.index + plainIpv6Match[0].length + 15;
+    const contextEnd = plainIpv6Match.index + plainIpv6Match[0].length + 15;
     const context = html.substring(contextStart, contextEnd);
     if (context.includes('http://') || context.includes('https://')) {
       if (!map.has(standardAddr)) {
@@ -491,7 +896,7 @@ function extractAddressesFromHTML(html) {
       const rest = candidate.substring(hashIndex + 1).trim();
       loc = rest.replace(/^#/, '').split('_')[0];
       if (loc && (loc.toLowerCase() === 'ipv4' || loc.toLowerCase() === 'ipv6')) {
-        loc = null;  // 视为未知，触发后续逻辑
+        loc = null;
       }
     }
     if (isValidAddressWithPort(addr)) {
@@ -553,7 +958,7 @@ function extractAddressesFromHTML(html) {
       const rest = candidate.substring(hashIndex + 1).trim();
       loc = rest.replace(/^#/, '').split('_')[0];
       if (loc && (loc.toLowerCase() === 'ipv4' || loc.toLowerCase() === 'ipv6')) {
-        loc = null;  // 视为未知，触发后续逻辑
+        loc = null;
       }
     }
     if (isValidAddressWithPort(addr)) {
@@ -564,7 +969,13 @@ function extractAddressesFromHTML(html) {
       }
     }
   }
-  return Array.from(map).map(([address, location]) => ({ address, location }));
+  const finalResults = Array.from(map).map(([address, location]) => ({ address, location }));
+  if (sourceFormat && finalResults.length > 0) {
+    console.log(`[线路抓取] ${sourceFormat} 格式最终提取结果: ${finalResults.length} 条`);
+    const withLocation = finalResults.filter(r => r.location).length;
+    console.log(`[线路抓取] 其中包含线路信息的: ${withLocation} 条`);
+  }
+  return finalResults;
 }
 /* ====================== 优化黑名单过滤函数 ====================== */
 // 预处理黑名单：精确匹配用Set（O(1)查找），域名模式用Set（endsWith检查）
@@ -608,13 +1019,20 @@ const KEYWORDS = [
 /* ====================== 核心：更新 + 自动测速 ====================== */
 async function handleUpdate(env) {
   const startTime = Date.now();
-  // 指数退避配置
+  const MAX_EXECUTION_TIME = 28000; // 28秒限制，避免30秒超时
+  // 资源监控配置
+  const RESOURCE_LIMITS = {
+    maxAddresses: 763,      // 最大处理地址数量
+    maxSources: 15,          // 最大数据源数量
+    memoryCheckInterval: 5000 // 内存检查间隔(ms)
+  };
+  // 指数退避配置 - 优化以减少资源消耗
   const RETRY_CONFIG = {
-    initialDelay: [1000, 1200],    // 初始延迟范围：1-1.2秒
-    maxDelay: [5000, 8000],       // 最大延迟范围：5-8秒
-    backoffFactor: [1.2, 2.2],        // 退避因子范围：1.2-2.2倍
-    maxRetries: 2,                // 最大重试次数
-    jitter: true                  // 启用抖动，避免雷群效应
+    initialDelay: [1200, 1500],    // 增加到1.2-1.5秒
+    maxDelay: [4000, 6000],         // 减少到4-6秒
+    backoffFactor: [1.3, 1.8],      // 减少退避因子
+    maxRetries: 1,                   // 从2降至1
+    jitter: true
   };
   // 计算指数退避延迟
   function calculateBackoffDelay(attempt, config) {
@@ -622,7 +1040,6 @@ async function handleUpdate(env) {
       config.initialDelay * Math.pow(config.backoffFactor, attempt - 1),
       config.maxDelay
     );
-    // 添加抖动（±25% 随机变化）
     if (config.jitter) {
       const jitterRange = delay * 0.25;
       delay = delay + (Math.random() * jitterRange * 2) - jitterRange;
@@ -635,6 +1052,16 @@ async function handleUpdate(env) {
     getRecentHistoryData(env, 3)
   ]);
   const { uniqueAddresses, results, addressesWithLocation } = initial;
+  // 资源监控：限制地址数量
+  if (uniqueAddresses.length > RESOURCE_LIMITS.maxAddresses) {
+    console.warn(`[资源限制] 地址数量过多 (${uniqueAddresses.length})，限制为 ${RESOURCE_LIMITS.maxAddresses}`);
+    uniqueAddresses.splice(RESOURCE_LIMITS.maxAddresses);
+  }
+  // 资源监控：限制数据源数量
+  if (results.length > RESOURCE_LIMITS.maxSources) {
+    console.warn(`[资源限制] 数据源过多 (${results.length})，限制为 ${RESOURCE_LIMITS.maxSources}`);
+    results.splice(RESOURCE_LIMITS.maxSources);
+  }
   // 2) 从最近历史中构建位置/延迟的映射
   const historyMap = new Map();
   if (historicalData && Array.isArray(historicalData)) {
@@ -654,8 +1081,17 @@ async function handleUpdate(env) {
   // 3) 筛选出需要测试地理位置的地址与需要测试延迟的地址
   const needLocationTest = [];
   const knownLocations = new Map();
+  // 资源监控：定期检查执行时间
+  const checkExecutionTime = () => {
+    const elapsed = Date.now() - startTime;
+    if (elapsed > MAX_EXECUTION_TIME) {
+      throw new Error(`执行时间超过限制 (${elapsed}ms > ${MAX_EXECUTION_TIME}ms)`);
+    }
+  };
   if (addressesWithLocation && Array.isArray(addressesWithLocation)) {
-    addressesWithLocation.forEach(item => {
+    addressesWithLocation.forEach((item, index) => {
+      // 每100个地址检查一次执行时间
+      if (index % 100 === 0) checkExecutionTime();
       if (!item || !item.address) return;
       const srcLoc = item.location?.trim();
       const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？","ipv4","ipv6","ip v4","ip v6"]);
@@ -677,9 +1113,10 @@ async function handleUpdate(env) {
     });
   }
   const needLatencyTest = [];
+  const uniqueAddressesList = uniqueAddresses || [];
   const knownLatencies = new Map();
-  if (uniqueAddresses && Array.isArray(uniqueAddresses)) {
-    uniqueAddresses.forEach(addr => {
+  if (uniqueAddressesList && Array.isArray(uniqueAddressesList)) {
+    uniqueAddressesList.forEach(addr => {
       if (!addr) return;
       const historyInfo = historyMap.get(addr);
       if (historyInfo && historyInfo.latency) {
@@ -689,42 +1126,67 @@ async function handleUpdate(env) {
       }
     });
   }
-  console.log(`Total Addresses: ${uniqueAddresses ? uniqueAddresses.length : 0}`);
-  console.log(`Need location test: ${needLocationTest ? needLocationTest.length : 0}`);
-  console.log(`Need latency test: ${needLatencyTest ? needLatencyTest.length : 0}`);
+  console.log(`Total Addresses: ${uniqueAddressesList.length}`);
+  console.log(`Need location test: ${needLocationTest.length}`);
+  console.log(`Need latency test: ${needLatencyTest.length}`);
   // 4) 验证函数：检查数据是否有效
   function isValidLocation(location) {
     if (!location || typeof location !== 'string') return false;
     const loc = location.trim();
     const useless = new Set(["未知","unknown","n/a","-","","null","無","?","？","ipv4","ipv6","ip v4","ip v6"]);
-    return loc && !useless.has(loc.toLowerCase()) && loc.toLowerCase() !== "unknown";
+    return !!loc && !useless.has(loc.toLowerCase()) && loc.toLowerCase() !== "unknown";
   }
   function isValidLatency(latency) {
     return latency !== null && latency !== undefined && typeof latency === 'number' && latency > 0;
   }
   // 5) 需要测试的新地理位置与新延迟信息，采用分块-分波并发控制
-  const CHUNK_SIZE = 18; // 每次批量的地址数量
-  const MAX_WAVES = 2;   // 同时并发执行的批次数量
-  // 内部 helpers
+  const CHUNK_SIZE = 4; // 从6降至4，减少单次处理量
+  const MAX_WAVES = 1;   // 同时并发执行的批次数量
+  // 内部 helpers - 增加资源监控和错误处理
   async function batchInWaves(items, batchFn) {
-    if (!items || items.length === 0) return [];
-    // 将 items 分成若干块
+    if (!items || items.length === 0) return { results: [], lastBatchSize: 0 };
+    // 资源监控：检查内存使用情况
+    const startTime = Date.now();
+    const maxProcessingTime = 25000; // 25秒限制，避免30秒超时
     const chunks = [];
     for (let i = 0; i < items.length; i += CHUNK_SIZE) {
       chunks.push(items.slice(i, i + CHUNK_SIZE));
-    }
-    // 逐波处理：每波最多 MAX_WAVES 批次并发
-    const results = [];
-    for (let i = 0; i < chunks.length; i += MAX_WAVES) {
-      const wave = chunks.slice(i, i + MAX_WAVES);
-      const promises = wave.map(chunk => batchFn(chunk).then(r => r || []));
-      const waveResults = await Promise.all(promises);
-      // 将当前波的结果按顺序拼接，保持与输入 chunk 的顺序一致
-      for (const wr of waveResults) {
-        results.push(...wr);
+      // 检查处理时间
+      if (Date.now() - startTime > maxProcessingTime) {
+        console.warn('[资源监控] 处理时间过长，提前终止');
+        break;
       }
     }
-    return results;
+    const lastBatchSize = chunks.length ? chunks[chunks.length - 1].length : 0;
+    const results = [];
+    for (let i = 0; i < chunks.length; i += MAX_WAVES) {
+      // 再次检查时间限制
+      if (Date.now() - startTime > maxProcessingTime) {
+        console.warn('[资源监控] 波次处理时间过长，提前终止');
+        break;
+      }
+      const wave = chunks.slice(i, i + MAX_WAVES);
+      try {
+        const promises = wave.map(chunk => 
+          batchFn(chunk).then(r => r || []).catch(error => {
+            console.warn('[批处理错误] 单个批次失败:', error.message);
+            return [];
+          })
+        );
+        const waveResults = await Promise.all(promises);
+        waveResults.forEach(wr => results.push(...wr));
+        // 波次间延迟，减少API压力
+        if (i + MAX_WAVES < chunks.length) {
+          await new Promise(r => setTimeout(r, 100)); // 增加到100ms
+        }
+      } catch (error) {
+        console.error('[波次处理错误] 整个波次失败:', error);
+        break;
+      }
+    }
+    const processingTime = Date.now() - startTime;
+    console.log(`[资源监控] 处理完成: ${items.length}项 -> ${results.length}结果, 耗时: ${processingTime}ms`);
+    return { results, lastBatchSize };
   }
   // 6) 改进的重试测试函数 - 指数退避策略
   async function testWithRetry(addresses, testFn, isValidFn) {
@@ -736,7 +1198,7 @@ async function handleUpdate(env) {
       totalDelayTime: 0
     };
     if (!addresses || addresses.length === 0) {
-      return { results: [], stats: stats, retryConfig: null };
+      return { results: [], stats: stats, retryConfig: null, lastBatchSizeUsed: 0 };
     }
     // 生成本次实际使用的随机配置
     const usedRetryConfig = {
@@ -749,48 +1211,54 @@ async function handleUpdate(env) {
       maxRetries: RETRY_CONFIG.maxRetries,
       jitter: RETRY_CONFIG.jitter
     };
-    
     console.log(`Testing ${addresses.length} addresses with exponential backoff`);
     console.log(`Retry config: initial=${Math.floor(usedRetryConfig.initialDelay)}ms, max=${Math.floor(usedRetryConfig.maxDelay)}ms, factor=${usedRetryConfig.backoffFactor.toFixed(2)}x`);
-    
     let currentAddresses = [...addresses];
     let finalResults = new Array(addresses.length).fill(null);
     let attempt = 0;
+    let lastBatchSizeUsed = 0;
+    let lastBatchCountsUsed = { ipv4:0, ipv6:0, domain:0 };
     while (currentAddresses.length > 0 && attempt <= usedRetryConfig.maxRetries) {
       attempt++;
-      // 计算当前重试的延迟时间
       const currentDelay = attempt > 1 ? calculateBackoffDelay(attempt, usedRetryConfig) : 0;
       if (attempt > 1) {
+        // 延迟与统计
         stats.retryCount++;
         stats.totalDelayTime += currentDelay;
         console.log(`Retry attempt ${attempt}: waiting ${currentDelay}ms before testing ${currentAddresses.length} addresses`);
         await new Promise(resolve => setTimeout(resolve, currentDelay));
       }
       console.log(`Attempt ${attempt}: testing ${currentAddresses.length} addresses`);
-      const results = await batchInWaves(currentAddresses, testFn);
+      // 直接使用 batchInWaves，testFn 作为回调，确保独立逻辑
+      const batch = await batchInWaves(currentAddresses, testFn);
+      const batchResults = batch.results;
+      lastBatchSizeUsed = batch.lastBatchSize;
+      lastBatchCountsUsed = batch.lastBatchCounts || lastBatchCountsUsed;
       const needRetry = [];
       for (let i = 0; i < currentAddresses.length; i++) {
         const address = currentAddresses[i];
-        const result = results[i];
+        const result = batchResults[i];
         const originalIndex = addresses.indexOf(address);
         if (isValidFn(result)) {
           finalResults[originalIndex] = result;
           stats.validResults++;
           console.log(`✓ ${address}: Valid`);
-        } else if (attempt < usedRetryConfig.maxRetries + 1) {
-          needRetry.push(address);
-          const nextDelay = calculateBackoffDelay(attempt + 1, usedRetryConfig);
-          console.log(`✗ ${address}: Retry scheduled (next delay: ${nextDelay}ms)`);
         } else {
-          finalResults[originalIndex] = result;
-          stats.failedCount++;
-          console.log(`✗ ${address}: Failed after ${attempt} attempts`);
+          if (attempt < usedRetryConfig.maxRetries + 1) {
+            needRetry.push(address);
+            const nextDelay = calculateBackoffDelay(attempt + 1, usedRetryConfig);
+            console.log(`✗ ${address}: Retry scheduled (next delay: ${nextDelay}ms)`);
+          } else {
+            finalResults[originalIndex] = result;
+            stats.failedCount++;
+            console.log(`✗ ${address}: Failed after ${attempt} attempts`);
+          }
         }
       }
       currentAddresses = needRetry;
     }
     console.log(`Test complete: Valid=${stats.validResults}, Failed=${stats.failedCount}, Retries=${stats.retryCount}, Total delay=${stats.totalDelayTime}ms`);
-    return { results: finalResults, stats: stats, retryConfig: usedRetryConfig };
+    return { results: finalResults, stats: stats, retryConfig: usedRetryConfig, lastBatchSizeUsed, lastBatchCountsUsed };
   }
   // 7) 执行测试
   let locationStats = { totalTested: 0, validResults: 0, retryCount: 0, failedCount: 0, totalDelayTime: 0 };
@@ -799,16 +1267,22 @@ async function handleUpdate(env) {
   let latencyRetryConfig = null;
   let newLocations = [];
   let newLatencies = [];
+  let locationLastBatchSize = 0;
+  let latencyLastBatchSize = 0;
+  let locationLastBatchCounts = { ipv4:0, ipv6:0, domain:0 };
+  let latencyLastBatchCounts = { ipv4:0, ipv6:0, domain:0 };
   if (needLocationTest && needLocationTest.length > 0) {
     console.log(`\n=== LOCATION TESTS ===`);
     const locationResult = await testWithRetry(
       needLocationTest,
-      batch => getLocationsForAddresses(batch),
+      batch => getLocationsForAddresses(batch, env),
       isValidLocation
     );
     newLocations = locationResult.results;
     locationStats = locationResult.stats;
     locationRetryConfig = locationResult.retryConfig;
+    locationLastBatchSize = locationResult.lastBatchSizeUsed || 0;
+    locationLastBatchCounts = locationResult.lastBatchCountsUsed || { ipv4:0, ipv6:0, domain:0 };
   }
   if (needLatencyTest && needLatencyTest.length > 0) {
     console.log(`\n=== LATENCY TESTS ===`);
@@ -820,6 +1294,8 @@ async function handleUpdate(env) {
     newLatencies = latencyResult.results;
     latencyStats = latencyResult.stats;
     latencyRetryConfig = latencyResult.retryConfig;
+    latencyLastBatchSize = latencyResult.lastBatchSizeUsed || 0;
+    latencyLastBatchCounts = latencyResult.lastBatchCountsUsed || { ipv4:0, ipv6:0, domain:0 };
   }
   // 8) 合并信息，保持与原有逻辑一致的映射关系
   const finalAddresses = [];
@@ -856,7 +1332,7 @@ async function handleUpdate(env) {
   const finalData = {
     ips: finalAddresses,
     lastUpdated: now.toISOString(),
-    count: uniqueAddresses ? uniqueAddresses.length : 0,
+    count: uniqueAddressesList.length,
     sources: results || []
   };
   const timestampKey = formatTimestampKey(now);
@@ -867,16 +1343,60 @@ async function handleUpdate(env) {
   // 兼容性存储
   await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(finalData));
   const duration = Date.now() - startTime;
+  // 统计本次更新的地址类型成功率（新增）
+  const addressSuccessStats = {
+    ipv4: { total: 0, successful: 0 },
+    ipv6: { total: 0, successful: 0 },
+    domain: { total: 0, successful: 0 }
+  };
+  // 统计位置测试结果
+  if (needLocationTest && needLocationTest.length > 0 && newLocations && newLocations.length > 0) {
+    for (let i = 0; i < needLocationTest.length; i++) {
+      const address = needLocationTest[i];
+      const location = newLocations[i];
+      const parsed = parseAddressWithPort(address);
+      if (parsed.type === 'ipv4') {
+        addressSuccessStats.ipv4.total++;
+        if (isValidLocation(location)) {
+          addressSuccessStats.ipv4.successful++;
+        }
+      } else if (parsed.type === 'ipv6') {
+        addressSuccessStats.ipv6.total++;
+        if (isValidLocation(location)) {
+          addressSuccessStats.ipv6.successful++;
+        }
+      } else if (parsed.type === 'domain') {
+        addressSuccessStats.domain.total++;
+        if (isValidLocation(location)) {
+          addressSuccessStats.domain.successful++;
+        }
+      }
+    }
+  }
+  // 获取地址成功率统计（用于后台批处理优化）
+  const addressStats = await getSuccessStats(env);
   // 9) 构建返回数据 - 包含实际使用的随机配置
   const response = {
     success: true,
     message: "更新并测速完成",
     duration: `${duration}ms`,
-    totalIPs: uniqueAddresses ? uniqueAddresses.length : 0,
-    newLocationTested: needLocationTest ? needLocationTest.length : 0,
-    newLatencyTested: needLatencyTest ? needLatencyTest.length : 0,
+    totalIPs: uniqueAddressesList.length,
+    newLocationTested: needLocationTest.length,
+    newLatencyTested: needLatencyTest.length,
     validLocations: locationStats.validResults,
     validLatencies: latencyStats.validResults,
+    // 新增：地址成功率统计（本次更新）
+    addressSuccessRates: {
+      ipv4: addressSuccessStats.ipv4.total > 0
+        ? `IPv4测试地区成功率: ${addressSuccessStats.ipv4.successful}/${addressSuccessStats.ipv4.total} = ${((addressSuccessStats.ipv4.successful / addressSuccessStats.ipv4.total) * 100).toFixed(1)}%`
+        : '本次未测试',
+      ipv6: addressSuccessStats.ipv6.total > 0
+        ? `IPv6测试地区成功率: ${addressSuccessStats.ipv6.successful}/${addressSuccessStats.ipv6.total} = ${((addressSuccessStats.ipv6.successful / addressSuccessStats.ipv6.total) * 100).toFixed(1)}%`
+        : '本次未测试',
+      domain: addressSuccessStats.domain.total > 0
+        ? `域名测试地区成功率: ${addressSuccessStats.domain.successful}/${addressSuccessStats.domain.total} = ${((addressSuccessStats.domain.successful / addressSuccessStats.domain.total) * 100).toFixed(1)}%`
+        : '本次未测试'
+    },
     // 重试统计
     locationRetryCount: locationStats.retryCount,
     locationFailedCount: locationStats.failedCount,
@@ -955,7 +1475,8 @@ async function updateAllAddresses(env) {
       // 使用完整URL作为标识，避免同一域名不同路径被视为相同来源
       const name = url;
       if (res.status === "fulfilled") {
-        const extracted = extractAddressesFromHTML(res.value);
+        // 传递 URL 以支持特定网站的线路名称抓取
+        const extracted = extractAddressesFromHTML(res.value, url);
         console.log(`URL ${url} extracted ${extracted.length} addresses:`, extracted);
         if (extracted && Array.isArray(extracted)) {
           extracted.forEach(item => {
@@ -970,7 +1491,7 @@ async function updateAllAddresses(env) {
         results.push({ name, status: "error", count: 0, error: res.reason?.message || "Unknown" });
       }
     });
-    if (i + 3 < urls.length) await new Promise(r => setTimeout(r, 300)); // 动态延迟优化
+    if (i + 3 < urls.length) await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 320)); // 动态延迟优化
   }
   const sortedAddresses = Array.from(uniqueAddressesMap).map(([address, location]) => ({ address, location }))
     .sort((a, b) => {
@@ -1008,9 +1529,284 @@ async function updateAllAddresses(env) {
   return { uniqueAddresses, results, addressesWithLocation };
 }
 // 增强地理位置获取，处理 IPv4、IPv6 和域名
-async function getLocationsForAddresses(addresses) {
+async function getLocationsForAddresses(addresses, env) {
   if (!addresses || addresses.length === 0) return [];
-  const batchSize = 32;
+  // 成功率统计相关常量
+  const SUCCESS_STATS_KEY = "batch_success_stats";
+  const MAX_WAVES = 1;
+  // 获取默认批次大小
+  function getDefaultBatchSize(addressType) {
+    switch (addressType) {
+      case 'ipv4': return 20;
+      case 'ipv6': return 1;
+      case 'domain': return 3;
+      default: return 3;
+    }
+  }
+  // 计算成功率
+  function calculateSuccessRate(stats, addressType) {
+    const typeStats = stats[addressType];
+    if (!typeStats || typeStats.totalBatches === 0) return 0;
+    return (typeStats.successfulBatches / typeStats.totalBatches * 100).toFixed(1);
+  }
+// 动态批次大小计算函数（修改版：使用地址级成功率）
+  function calculateDynamicBatchSize(addressType, stats, baseSize) {
+    const typeStats = stats[addressType];
+    // 检查是否有足够的地址数据（而不是批次数据）
+    if (!typeStats || typeStats.totalAddresses < 10) {
+      // 地址数据不足，使用默认值
+      console.log(`[批处理优化] ${addressType}: 地址数据不足（${typeStats?.totalAddresses || 0} < 10），使用默认批次大小=${baseSize}`);
+      return baseSize;
+    }
+    // 计算地址成功率（而不是批次成功率）
+    const recentSuccessRate = typeStats.recentSuccess.filter(s => s).length / typeStats.recentSuccess.length;
+    const overallSuccessRate = typeStats.totalAddresses > 0 
+      ? (typeStats.successfulAddresses / typeStats.totalAddresses)
+      : 0;
+    // 综合成功率（最近成功率权重更高）
+    const combinedSuccessRate = recentSuccessRate * 0.7 + overallSuccessRate * 0.3;
+    // 动态调整策略
+    let adjustmentFactor = 1.0;
+    if (combinedSuccessRate > 0.9) {
+      // 高成功率：可以增加批次大小
+      adjustmentFactor = 1.2 + (combinedSuccessRate - 0.9) * 2; // 最大 1.4 倍
+    } else if (combinedSuccessRate > 0.7) {
+      // 中等成功率：保持当前大小
+      adjustmentFactor = 1.0;
+    } else if (combinedSuccessRate > 0.5) {
+      // 低成功率：减少批次大小
+      adjustmentFactor = 0.8 - (0.7 - combinedSuccessRate); // 最小 0.6 倍
+    } else {
+      // 很低成功率：大幅减少批次大小
+      adjustmentFactor = 0.5;
+    }
+    // 应用调整因子，并限制在合理范围内
+    const adjustedSize = Math.round(baseSize * adjustmentFactor);
+    // IPv6 强制限制为每批1个地址，因为API不支持批量测试
+    const minSize = addressType === 'ipv4' ? 5 : addressType === 'ipv6' ? 1 : 2; // 从8降至5
+    const maxSize = addressType === 'ipv4' ? 40 : addressType === 'ipv6' ? 1 : 10; // 从64/16降至40/10
+    const dynamicChunkSize = Math.max(minSize, Math.min(maxSize, adjustedSize));
+    console.log(`[批处理优化] ${addressType}: 基础大小=${baseSize}, 调整后=${dynamicChunkSize}, 成功率=${(combinedSuccessRate * 100).toFixed(2)}%, 调整因子=${adjustmentFactor.toFixed(2)}`);
+    return dynamicChunkSize;
+  }
+  // 获取成功率统计
+  async function getSuccessStats() {
+    let raw = null;
+    try {
+      if (env.IP_STORAGE) {
+        raw = await env.IP_STORAGE.get(SUCCESS_STATS_KEY);
+      }
+    } catch (e) {
+      console.warn('IP_STORAGE KV 存储访问失败，使用内存存储:', e);
+    }
+    if (!raw) {
+      return initializeSuccessStats();
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn('解析成功率统计失败，使用默认值:', e);
+      return initializeSuccessStats();
+    }
+  }
+// 更新成功率统计（修改版：统计地址级成功率）
+  async function updateSuccessStats(addressType, batchResults) {
+    const stats = await getSuccessStats();
+    const typeStats = stats[addressType];
+    // 修改：统计地址级别的成功/失败，而不是批次级别的
+    let totalAddresses = 0;
+    let successfulAddresses = 0;
+    batchResults.forEach(result => {
+      // result.addresses 是该批次中每个地址的查询结果数组
+      if (result.addresses && Array.isArray(result.addresses)) {
+        result.addresses.forEach(addrResult => {
+          totalAddresses++;
+          if (addrResult.success) {
+            successfulAddresses++;
+          }
+        });
+      }
+    });
+    // 更新总体统计（地址数量）
+    typeStats.totalAddresses = (typeStats.totalAddresses || 0) + totalAddresses;
+    typeStats.successfulAddresses = (typeStats.successfulAddresses || 0) + successfulAddresses;
+    // 更新最近成功状态（按地址计算，保持最近100个地址的成功状态）
+    batchResults.forEach(result => {
+      if (result.addresses && Array.isArray(result.addresses)) {
+        result.addresses.forEach(addrResult => {
+          typeStats.recentSuccess.push(addrResult.success);
+          if (typeStats.recentSuccess.length > 100) {
+            typeStats.recentSuccess.shift();
+          }
+        });
+      }
+    });
+    // 保留批次数统计（兼容性）
+    typeStats.totalBatches += batchResults.length;
+    const successfulBatches = batchResults.filter(r => r.success).length;
+    typeStats.successfulBatches += successfulBatches;
+    // 更新平均批次大小
+    typeStats.avgBatchSize = batchResults.reduce((sum, r) => sum + r.batchSize, 0) / batchResults.length;
+    typeStats.lastUpdated = new Date().toISOString();
+    // 保存到 IP_STORAGE KV 存储或内存
+    try {
+      if (env.IP_STORAGE) {
+        await env.IP_STORAGE.put(SUCCESS_STATS_KEY, JSON.stringify(stats));
+      }
+    } catch (e) {
+      console.warn('IP_STORAGE KV 存储保存失败，使用内存存储:', e);
+    }
+    const successRate = typeStats.totalAddresses > 0 
+      ? ((typeStats.successfulAddresses / typeStats.totalAddresses) * 100).toFixed(1)
+      : 0;
+    console.log(`[统计更新] ${addressType}: 地址成功率 ${typeStats.successfulAddresses}/${typeStats.totalAddresses} (${successRate}%)`);
+  }
+// 获取默认批次大小（新增）
+  function getDefaultBatchSize(addressType) {
+    switch (addressType) {
+      case 'ipv4': return 20;
+      case 'ipv6': return 1;
+      case 'domain': return 3;
+      default: return 3;
+    }
+  }
+  // 计算成功率（新增）
+  function calculateSuccessRate(stats, addressType) {
+    const typeStats = stats[addressType];
+    if (!typeStats || typeStats.totalAddresses === 0) return 0;
+    return (typeStats.successfulAddresses / typeStats.totalAddresses * 100).toFixed(1);
+  }
+  // 获取默认批次大小（新增）
+  function getDefaultBatchSize(addressType) {
+    switch (addressType) {
+      case 'ipv4': return 20;
+      case 'ipv6': return 1;  // IPv6 每批只处理单个地址，因为API不支持批量测试  // IPv6 每批只处理单个地址，因为API不支持批量测试
+      case 'domain': return 3;
+      default: return 3;
+    }
+  }
+  // 增强的批处理函数，带地址级别的成功率统计（修改版）
+  async function batchInWavesWithStats(items, batchFn, addressType) {
+    if (!items || items.length === 0) return [];
+    // 获取当前成功率统计
+    const stats = await getSuccessStats();
+    const baseSize = getDefaultBatchSize(addressType);
+    const dynamicChunkSize = calculateDynamicBatchSize(addressType, stats, baseSize);
+    console.log(`[动态调整] ${addressType} 批次大小: ${baseSize} -> ${dynamicChunkSize}`);
+    // 分块处理
+    const chunks = [];
+    for (let i = 0; i < items.length; i += dynamicChunkSize) {
+      chunks.push(items.slice(i, i + dynamicChunkSize));
+    }
+    // 逐波处理
+    const results = [];
+    const batchResults = [];
+    for (let i = 0; i < chunks.length; i += MAX_WAVES) {
+      const wave = chunks.slice(i, i + MAX_WAVES);
+      const promises = wave.map(async (chunk, waveIndex) => {
+        try {
+          const startTime = Date.now();
+          // 修改：batchFn 现在应该返回每个地址的结果数组
+          const addressResults = await batchFn(chunk);
+          const duration = Date.now() - startTime;
+          // 修改：记录批次成功，以及每个地址的详细结果
+          const hasAnySuccess = addressResults && addressResults.some(r => r && r.success);
+          batchResults.push({
+            addressType,
+            success: hasAnySuccess, // 批次成功 = 至少有一个地址成功
+            batchSize: chunk.length,
+            addresses: addressResults, // 新增：每个地址的查询结果
+            duration,
+            timestamp: new Date().toISOString()
+          });
+          return addressResults || [];
+        } catch (error) {
+          // 批次整体失败，记录每个地址都失败
+          const failedAddresses = chunk.map(addr => ({
+            address: addr,
+            success: false,
+            error: error.message
+          }));
+          batchResults.push({
+            addressType,
+            success: false,
+            batchSize: chunk.length,
+            addresses: failedAddresses, // 新增：每个地址的失败结果
+            error: error.message,
+            timestamp: new Date().toISOString()
+          });
+          console.error(`[批次失败] ${addressType} 批次大小 ${chunk.length}:`, error);
+          return failedAddresses;
+        }
+      });
+      const waveResults = await Promise.all(promises);
+      waveResults.forEach(wr => results.push(...wr));
+      // 波次间延迟
+      if (i + MAX_WAVES < chunks.length) {
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 980));
+      }
+    }
+    // 更新成功率统计
+    await updateSuccessStats(addressType, batchResults);
+    return results;
+  }
+  // 地址解析函数
+  function parseAddressWithPort(address) {
+    if (!address) return { type: 'unknown', address: '', port: null };
+    // IPv6 地址处理
+    if (address.includes(':') && address.includes('[') && address.includes(']')) {
+      const match = address.match(/^\[([0-9a-fA-F:]+)\]:(\d+)$/);
+      if (match) {
+        return { type: 'ipv6', address: match[1], port: parseInt(match[2]) };
+      }
+    }
+    // 简单 IPv6 地址（无端口）
+    if (address.includes(':') && address.split(':').length >= 3) {
+      return { type: 'ipv6', address: address, port: null };
+    }
+    // IPv4 或域名（带端口）
+    if (address.includes(':')) {
+      const parts = address.split(':');
+      if (parts.length === 2) {
+        const host = parts[0];
+        const port = parseInt(parts[1]);
+        if (!isNaN(port) && port > 0 && port <= 65535) {
+          // 判断是 IPv4 还是域名
+          if (host.split('.').length === 4 && host.split('.').every(part => !isNaN(part))) {
+            return { type: 'ipv4', address: host, port };
+          } else {
+            return { type: 'domain', address: host, port };
+          }
+        }
+      }
+    }
+    // IPv4 地址（无端口）
+    if (address.split('.').length === 4 && address.split('.').every(part => !isNaN(part))) {
+      return { type: 'ipv4', address: address, port: null };
+    }
+    // 域名（无端口）
+    return { type: 'domain', address: address, port: null };
+  }
+  // 带重试的 fetch 函数
+  async function fetchWithRetry(url, options = {}, maxRetries = 3, timeout = 5000) {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return response;
+      } catch (error) {
+        if (i === maxRetries - 1) throw error;
+        console.warn(`Fetch retry ${i + 1}/${maxRetries} for ${url}:`, error.message);
+        await new Promise(r => setTimeout(r, 1000 * (i + 1) + (Math.floor(Math.random() * 51) - 20)) );
+      }
+    }
+  }
+  // 初始化位置数组
   const locs = new Array(addresses.length).fill("未知");
   // 初始：域名默认回退到域名本身
   addresses.forEach((addr, idx) => {
@@ -1039,107 +1835,159 @@ async function getLocationsForAddresses(addresses) {
       domainIndices.push(idx); 
     }
   });
-  // IPv4 - 批量
-  for (let i = 0; i < ipv4Addresses.length; i += batchSize) {
-    const batchIps = ipv4Addresses.slice(i, i + batchSize);
-    const batchIndices = ipv4Indices.slice(i, i + batchSize);
-    const batchBody = batchIps.map(ip => ({ query: ip, fields: "countryCode" }));
-    try {
-      const resp = await fetchWithRetry("http://ip-api.com/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(batchBody)
-      }, 3, 200);
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data && Array.isArray(data)) {
-          data.forEach((o, j) => {
-            if (o?.countryCode && batchIndices[j] < locs.length) {
-              locs[batchIndices[j]] = o.countryCode;
-            }
-          });
-        }
-      }
-    } catch (e) {
-      console.error("Location IPv4 batch failed:", e);
-    }
-    if (i + batchSize < ipv4Addresses.length) await new Promise(r => setTimeout(r, 5000));
-  }
-  // IPv6 - 批量
-  const ipv6BatchSize = 4;
-  for (let i = 0; i < ipv6Addresses.length; i += ipv6BatchSize) {
-    const batchIps = ipv6Addresses.slice(i, i + ipv6BatchSize);
-    const batchIndices = ipv6Indices.slice(i, i + ipv6BatchSize);
-    try {
-      const resp = await fetchWithRetry("https://ipinfo.io/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(batchIps)
-      }, 3, 400);
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data && Array.isArray(data)) {
-          data.forEach((d, j) => {
-            if (d?.country && batchIndices[j] < locs.length) {
-              locs[batchIndices[j]] = d.country + '_IPv6';
-            }
-          });
-        }
-      }
-    } catch (e) {
-      console.error("Location batch IPv6 failed:", e);
-      // 回退：逐个请求
-      for (let k = 0; k < batchIps.length; k++) {
-        const idx = batchIndices[k];
-        const ip = batchIps[k];
-        try {
-          const sr = await fetchWithRetry(`https://ipinfo.io/${ip}/json`, {}, 1, 0);
-          if (sr.ok) {
-            const sdata = await sr.json();
-            if (sdata?.country && idx < locs.length) {
-              locs[idx] = sdata.country + '_IPv6';
-            }
-          }
-        } catch (se) {
-          console.error("Fallback IPv6 location failed for", ip, se);
-        }
-        if (k + 1 < batchIps.length) await new Promise(r => setTimeout(r, 1100));
-      }
-    }
-    if (i + ipv6BatchSize < ipv6Addresses.length) await new Promise(r => setTimeout(r, 1000));
-  }
-  // 域名 DoH + 国家代码
-  const domainBatchSize = 4;
-  for (let i = 0; i < domainAddresses.length; i += domainBatchSize) {
-    const batchDomains = domainAddresses.slice(i, i + domainBatchSize);
-    const batchIndices = domainIndices.slice(i, i + domainBatchSize);
-    for (let j = 0; j < batchDomains.length; j++) {
-      const domain = batchDomains[j];
-      const idx = batchIndices[j];
+// IPv4 - 使用动态批次大小（修改版：返回每个地址的结果）
+  if (ipv4Addresses.length > 0) {
+    console.log(`开始处理 ${ipv4Addresses.length} 个 IPv4 地址`);
+    const ipv4BatchFn = async (batchIps) => {
+      const batchIndices = ipv4Indices.slice(ipv4Addresses.indexOf(batchIps[0]), ipv4Addresses.indexOf(batchIps[0]) + batchIps.length);
+      const batchBody = batchIps.map(ip => ({ query: ip, fields: "countryCode" }));
       try {
-        const dohResp = await fetchWithRetry(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=A`, {
-          headers: { 'Accept': 'application/dns-json' }
+        const resp = await fetchWithRetry("http://ip-api.com/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(batchBody)
         }, 3, 200);
-        if (!dohResp.ok) continue;
-        const dohData = await dohResp.json();
-        if (dohData.Status !== 0 || !dohData.Answer) continue;
-        const ipRecord = dohData.Answer.find(a => a.type === 1);
-        if (!ipRecord || !ipRecord.data) continue;
-        const ip = ipRecord.data;
-        const apiResp = await fetchWithRetry(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}`, {}, 3, 362);
-        if (apiResp.ok) {
-          const locationData = await apiResp.json();
-          const countryCode = locationData?.location?.country_code;
-          if (countryCode && idx < locs.length) {
-            locs[idx] = domain + '_' + countryCode;
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data && Array.isArray(data)) {
+            // 修改：返回每个地址的查询结果
+            return data.map((o, j) => {
+              const idx = batchIndices[j];
+              const success = !!(o?.countryCode);
+              if (success && idx < locs.length) {
+                locs[idx] = o.countryCode;
+              }
+              return {
+                address: batchIps[j],
+                success: success,
+                countryCode: o?.countryCode || null
+              };
+            });
           }
+        }
+        // API 请求失败，返回所有地址失败
+        return batchIps.map(ip => ({
+          address: ip,
+          success: false,
+          error: 'API request failed'
+        }));
+      } catch (e) {
+        console.error("Location IPv4 batch failed:", e);
+        // 异常也返回所有地址失败
+        return batchIps.map(ip => ({
+          address: ip,
+          success: false,
+          error: e.message
+        }));
+      }
+    };
+    await batchInWavesWithStats(ipv4Addresses, ipv4BatchFn, 'ipv4');
+    // 批次间延迟
+    if (ipv4Addresses.length > 0) {
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1510) + 3860));
+    }
+  }
+// IPv6 - 每批只处理单个地址，直接使用单个IP API端点
+  if (ipv6Addresses.length > 0) {
+    console.log(`开始处理 ${ipv6Addresses.length} 个 IPv6 地址（每批单个）`);
+    const ipv6BatchFn = async (batchIps) => {
+      // 由于每批只有1个IP，直接处理
+      const ip = batchIps[0];
+      const idx = ipv6Indices[ipv6Addresses.indexOf(ip)];
+      try {
+        const resp = await fetchWithRetry(`https://ipinfo.io/${ip}/json`, {
+          method: "GET",
+          headers: { "Accept": "application/json" }
+        }, 3, 400);
+        if (resp.ok) {
+          const data = await resp.json();
+          const success = !!(data?.country);
+          if (success && idx < locs.length) {
+            locs[idx] = data.country + '_IPv6';
+          }
+          return [{
+            address: ip,
+            success: success,
+            country: data?.country || null
+          }];
+        } else {
+          return [{
+            address: ip,
+            success: false,
+            error: `HTTP ${resp.status}`
+          }];
         }
       } catch (e) {
-        console.error("Domain location failed for", domain, e);
+        console.error("Location IPv6 individual request failed:", e);
+        return [{
+          address: ip,
+          success: false,
+          error: e.message
+        }];
       }
-      await new Promise(r => setTimeout(r, 368));
+    };
+    await batchInWavesWithStats(ipv6Addresses, ipv6BatchFn, 'ipv6');
+    // 批次间延迟
+    if (ipv6Addresses.length > 0) {
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 980));
     }
   }
+// 域名 DoH + 国家代码 - 使用动态批次大小（修改版：返回每个地址的结果）
+  if (domainAddresses.length > 0) {
+    console.log(`开始处理 ${domainAddresses.length} 个域名地址`);
+    const domainBatchFn = async (batchDomains) => {
+      const batchIndices = domainIndices.slice(domainAddresses.indexOf(batchDomains[0]), domainAddresses.indexOf(batchDomains[0]) + batchDomains.length);
+      const results = [];
+      for (let j = 0; j < batchDomains.length; j++) {
+        const domain = batchDomains[j];
+        const idx = batchIndices[j];
+        let success = false;
+        let location = null;
+        try {
+          const dohResp = await fetchWithRetry(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=A`, {
+            headers: { 'Accept': 'application/dns-json' }
+          }, 3, 200);
+          if (!dohResp.ok) throw new Error('DoH request failed');
+          const dohData = await dohResp.json();
+          if (dohData.Status !== 0 || !dohData.Answer) {
+            throw new Error('DNS query failed');
+          }
+          const ipRecord = dohData.Answer.find(a => a.type === 1);
+          if (!ipRecord || !ipRecord.data) {
+            throw new Error('No A record found');
+          }
+          const ip = ipRecord.data;
+          const apiResp = await fetchWithRetry(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}`, {}, 3, 362);
+          if (apiResp.ok) {
+            const locationData = await apiResp.json();
+            const countryCode = locationData?.location?.country_code;
+            if (countryCode && idx < locs.length) {
+              location = domain + '_' + countryCode;
+              locs[idx] = location;
+              success = true;
+            } else {
+              success = false;
+            }
+          } else {
+            success = false;
+          }
+        } catch (e) {
+          console.error("Domain location failed for", domain, e);
+          success = false;
+        }
+        results.push({
+          address: domain,
+          success: success,
+          location: location
+        });
+        // 域名处理间隔
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 380));
+      }
+      return results;
+    };
+    await batchInWavesWithStats(domainAddresses, domainBatchFn, 'domain');
+  }
+  console.log(`地理位置处理完成: 总计 ${addresses.length} 个地址`);
   return locs;
 }
 async function fetchURLWithTimeout(url, timeout = 10000) {
@@ -1189,7 +2037,7 @@ async function testIPLatency(addressWithPort, timeout = 8000) {
       if (attempts >= maxAttempts) {
         return { success: false, latency: null };
       }
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * 61) + 980));
     } finally {
       clearTimeout(tid);
     }
@@ -1209,7 +2057,7 @@ async function batchTestLatency(addresses, concurrency = 4) {
         }
         const res = await testIPLatency(addr);
         results[i + idx] = res;
-        await new Promise(r => setTimeout(r, 352));
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 362));
       })
     );
   }
@@ -1283,6 +2131,10 @@ async function cleanupOldIPs(env) {
   }
 }
 /* ====================== 来源管理 ====================== */
+// 增强线路名称抓取的特定源：
+// - IPDB yx.txt: 域名/IP#线路名称 格式
+// - wetest.vip cname: 域名列表+备注
+// - api.uouin.com: 表格格式（线路+IP）
 const defaultUrls = [
   "https://ip.164746.xyz",
   "https://ip.haogege.xyz/",
@@ -1290,7 +2142,9 @@ const defaultUrls = [
   "https://api.uouin.com/cloudflare.html",
   "https://addressesapi.090227.xyz/CloudFlareYes",
   "https://addressesapi.090227.xyz/ip.164746.xyz",
-  "https://www.wetest.vip/page/cloudflare/address_v4.html"
+  "https://www.wetest.vip/page/cloudflare/address_v4.html",
+  "https://www.wetest.vip/page/cloudflare/address_v6.html",
+  "https://www.wetest.vip/page/cloudflare/cname.html"
 ];
 async function getSources(env) {
   const raw = await env.IP_STORAGE.get("sources_urls");
@@ -1392,7 +2246,7 @@ async function getAllUniqueIPCount(env) {
   const blacklistRaw = await getBlacklist(env);
   const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
   const allIPs = new Set();
-  const LIST_LIMIT = 522; // 优化：减小limit，分页处理以避免单次list过多
+  const LIST_LIMIT = 300; // 从522降至300，进一步减少单次KV操作负载
   let cursor = null;
   const allKeys = [];
   // 分页收集所有键
@@ -1402,7 +2256,7 @@ async function getAllUniqueIPCount(env) {
     cursor = list.cursor;
   } while (cursor);
   // 批量获取值（分批以避免内存峰值）
-  const BATCH_SIZE = 52; // 每个批次处理52个键
+  const BATCH_SIZE = 39; // 从52降至39，减少内存峰值
   for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
     const batchKeys = allKeys.slice(i, i + BATCH_SIZE);
     const batchResults = await batchGetKV(env, batchKeys);
@@ -1422,7 +2276,7 @@ async function getAllUniqueIPCount(env) {
       }
     });
     // 小延迟避免CPU峰值
-    if (i + BATCH_SIZE < allKeys.length) await new Promise(r => setTimeout(r, 10));
+    if (i + BATCH_SIZE < allKeys.length) await new Promise(r => setTimeout(r, Math.floor(Math.random() * 11) + 20));
   }
   return allIPs.size;
 }
@@ -1713,7 +2567,10 @@ async function serveHTML(env, request) {
         .source { padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #10b981; }
         .source.error { border-left-color: #ef4444; }
         .footer { text-align: center; margin-top: 40px; padding-top: 30px; border-top: 1px solid #e2e8f0; color: #64748b; }
+        .footer-logo { width: 16px; height: 16px; vertical-align: middle; margin-right: 2px; transform: translateY(-2px); }
         .admin-overlay { ${showSetPassword || showLogin ? 'display: flex;' : 'display: none;'} position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 9999; justify-content: center; align-items: center; }
+        .content-overlay { ${!showAdminButton && (showSetPassword || showLogin) ? 'display: block;' : 'display: none;'} position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.1); backdrop-filter: blur(12px); z-index: 1; pointer-events: none; }
+        .container { ${!showAdminButton && (showSetPassword || showLogin) ? 'filter: blur(8px); pointer-events: none; user-select: none;' : ''} transition: filter 0.3s ease; }
         .admin-modal { background: white; padding: 40px; border-radius: 16px; max-width: 400px; width: 90%; text-align: center; border: 1px solid #e2e8f0; box-shadow: 0 20px 25px rgba(0,0,0,0.1); }
         .admin-modal h3 { margin-bottom: 20px; color: #1e40af; }
         .admin-modal input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 16px; font-size: 1rem; }
@@ -1736,10 +2593,12 @@ async function serveHTML(env, request) {
             .admin-dropdown { margin-top: -156px !important; min-width: 122px; }
             .admin-modal { padding: 20px; }
             #ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
+            .footer-logo { width: 16px; height: 16px; }
         }
     </style>
 </head>
-<body>
+<body class="${showAdminButton ? 'authenticated' : 'unauthenticated'}">
+    ${!showAdminButton && (showSetPassword || showLogin) ? '<div class="content-overlay"></div>' : ''}
     <div class="container">
         <div class="header">
             <div class="header-content">
@@ -1878,10 +2737,10 @@ async function serveHTML(env, request) {
   }).join('') : '<p style="color: #64748b;">暂无数据来源信息</p>'}
               </div>
           </div>
-        <div class="footer">
+		<div class="footer">
 			<p>
-				<img src="/favicon.png" style="width: 16px; height: 16px; vertical-align: middle; margin-right: 2px; transform: translateY(-2px);" title="logo" />
-				Cloudflare IP/域名 Collector © ${new Date().getFullYear()} | 增强版：完美支持 IPv6 和域名
+				<img src="/favicon.png" class="footer-logo" title="logo" />
+				Cloudflare IP/域名 Collector © ${new Date().getFullYear()} | 增强版
 			</p>
 		</div>
     </div>
@@ -1989,7 +2848,10 @@ async function serveHTML(env, request) {
         }
         async function loginAdmin() {
             const input = document.getElementById('login-password-input');
-            if (!input || !input.value) return alert('请输入密码');
+            if (!input || !input.value) {
+                alert('请输入密码');
+                return;
+            }
             try {
                 const response = await fetch('/admin-login', {
                     method: 'POST',
@@ -2001,11 +2863,66 @@ async function serveHTML(env, request) {
                     location.reload();
                 } else {
                     alert('登录失败: ' + (data.error || '未知错误'));
+                    // 清空密码输入框
+                    if (input) input.value = '';
+                    // 确保模糊效果保持
+                    ensureBlurEffect();
                 }
             } catch (error) {
                 alert('登录失败: ' + error.message);
+                // 清空密码输入框
+                if (input) input.value = '';
+                // 确保模糊效果保持
+                ensureBlurEffect();
             }
         }
+        function ensureBlurEffect() {
+            const container = document.querySelector('.container');
+            const contentOverlay = document.querySelector('.content-overlay');
+            if (container && !document.body.classList.contains('authenticated')) {
+                container.style.filter = 'blur(8px)';
+                container.style.pointerEvents = 'none';
+                container.style.userSelect = 'none';
+            }
+            if (contentOverlay && !document.body.classList.contains('authenticated')) {
+                contentOverlay.style.display = 'block';
+            }
+        }
+        // 页面加载时确保安全状态
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!document.body.classList.contains('authenticated')) {
+                // 禁用所有交互元素
+                const interactiveElements = document.querySelectorAll('button, a, input, select, textarea');
+                interactiveElements.forEach(el => {
+                    if (el.id !== 'login-password-input' && !el.onclick?.toString().includes('loginAdmin')) {
+                        el.style.pointerEvents = 'none';
+                        el.style.opacity = '0.5';
+                    }
+                });
+                ensureBlurEffect();
+            }
+        });
+        // 防止通过开发者工具移除模糊效果
+        (function() {
+            let blurCheckInterval;
+            function checkBlurStatus() {
+                if (!document.body.classList.contains('authenticated')) {
+                    const container = document.querySelector('.container');
+                    const contentOverlay = document.querySelector('.content-overlay');
+                    if (container && (!container.style.filter || container.style.filter === 'none')) {
+                        container.style.filter = 'blur(8px)';
+                        container.style.pointerEvents = 'none';
+                        container.style.userSelect = 'none';
+                    }
+                    if (contentOverlay && contentOverlay.style.display === 'none') {
+                        contentOverlay.style.display = 'block';
+                    }
+                }
+            }
+            if (!document.body.classList.contains('authenticated')) {
+                blurCheckInterval = setInterval(checkBlurStatus, 1000);
+            }
+        })();
         function closeAdminOverlay() {
             const overlay = document.getElementById('admin-overlay');
             if (overlay) overlay.style.display = 'none';
@@ -2441,18 +3358,42 @@ async function serveHTML(env, request) {
                         resultHtml += '</div>';
                         // 退避配置详情（如果有）
                         //if (data.retryConfig) {
-                            //resultHtml += '<div style="margin-top: 12px; background: #faf5ff; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                            //resultHtml += '<div style="font-size: 1.0rem; font-weight: 600; color: #059669; margin-bottom: 8px;">🔧 退避配置详情</div>';
-                            //resultHtml += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; font-size: 0.85rem; color: #6b7280;">';
-                            //resultHtml += '<div><strong style="color: #d97706;">初始延迟:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.initialDelay) + 'ms</strong></div>';
-                            //resultHtml += '<div><strong style="color: #d97706;">最大延迟:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.maxDelay) + 'ms</strong></div>';
-                            //resultHtml += '<div><strong style="color: #d97706;">退避因子:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.backoffFactor) + 'x</strong></div>';
-                            //resultHtml += '<div><strong style="color: #d97706;">最大重试:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.maxRetries) + '次</strong></div>';
-                            //resultHtml += '<div><strong style="color: #d97706;">抖动开关:</strong> <strong style="color: #059669;">' + (data.retryConfig.jitter ? '开启' : '关闭') + '</strong></div>';
-                            //resultHtml += '</div>';
-                            //resultHtml += '</div>';
+                        //    resultHtml += '<div style="margin-top: 12px; background: #faf5ff; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
+                        //    resultHtml += '<div style="font-size: 1.0rem; font-weight: 600; color: #059669; margin-bottom: 8px;">🔧 退避配置详情</div>';
+                        //    resultHtml += '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; font-size: 0.85rem; color: #6b7280;">';
+                        //    resultHtml += '<div><strong style="color: #d97706;">初始延迟:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.initialDelay) + 'ms</strong></div>';
+                        //    resultHtml += '<div><strong style="color: #d97706;">最大延迟:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.maxDelay) + 'ms</strong></div>';
+                        //    resultHtml += '<div><strong style="color: #d97706;">退避因子:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.backoffFactor) + 'x</strong></div>';
+                        //    resultHtml += '<div><strong style="color: #d97706;">最大重试:</strong> <strong style="color: #059669;">' + escapeHtml(data.retryConfig.maxRetries) + '次</strong></div>';
+                        //    resultHtml += '<div><strong style="color: #d97706;">抖动开关:</strong> <strong style="color: #059669;">' + (data.retryConfig.jitter ? '开启' : '关闭') + '</strong></div>';
+                        //    resultHtml += '</div>';
+                        //    resultHtml += '</div>';
                         //}
                     }
+                    // 地址成功率统计（新增）- 三列布局
+                    resultHtml += '<h4 style="margin: 16px 0 12px 0; color: #059669; font-weight: 600;">📊 地址成功率统计</h4>';
+                    resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; background: #f0fdf4; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
+                    if (data.addressSuccessRates) {
+                        // IPv4 - 始终显示
+                        resultHtml += '<div style="background: #dbeafe; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6;">';
+                        resultHtml += '<div style="font-weight: 600; color: #1e40af; font-size: 0.9rem;">📍 IPv4 地址成功率</div>';
+                        resultHtml += '<div style="font-size: 0.9rem; color: #059669; font-weight: 600;">' + escapeHtml(data.addressSuccessRates.ipv4 || '本次未测试') + '</div>';
+                        resultHtml += '</div>';
+                        // IPv6 - 始终显示
+                        resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
+                        resultHtml += '<div style="font-weight: 600; color: #059669; font-size: 0.9rem;">📍 IPv6 地址成功率</div>';
+                        resultHtml += '<div style="font-size: 0.9rem; color: #059669; font-weight: 600;">' + escapeHtml(data.addressSuccessRates.ipv6 || '本次未测试') + '</div>';
+                        resultHtml += '</div>';
+                        // 域名 - 始终显示
+                        resultHtml += '<div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
+                        resultHtml += '<div style="font-weight: 600; color: #d97706; font-size: 0.9rem;">🌐 域名成功率</div>';
+                        resultHtml += '<div style="font-size: 0.9rem; color: #059669; font-weight: 600;">' + escapeHtml(data.addressSuccessRates.domain || '本次未测试') + '</div>';
+                        resultHtml += '</div>';
+                    } else {
+                        resultHtml += '<div style="color: #6b7280; padding: 8px; grid-column: 1 / -1;">暂无地址成功率数据</div>';
+                    }
+					resultHtml += '</div>';
+                    resultHtml += '</div>';
                     // 有效结果统计（如果有）
                     if (data.validLocations !== undefined || data.validLatencies !== undefined) {
                         resultHtml += '<h4 style="margin: 16px 0 12px 0; color: #059669; font-weight: 600;">✅ 有效结果</h4>';
