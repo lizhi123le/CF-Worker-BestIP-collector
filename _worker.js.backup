@@ -2476,31 +2476,144 @@ async function serveHTML(env, request) {
     <!-- 主题色 -->
     <meta name="theme-color" content="#3b82f6">
     <style>
+        :root {
+            /* 浅色模式变量 */
+            --bg-primary: #f8fafc;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --bg-hover: #f1f5f9;
+            --bg-stat: #f8fafc;
+            --bg-ip-list: #f8fafc;
+            --bg-source: #f8fafc;
+            --bg-modal: #ffffff;
+            --bg-admin-modal: #ffffff;
+            --bg-admin-dropdown: #ffffff;
+            --bg-overlay: rgba(0,0,0,0.5);
+            --bg-content-overlay: rgba(0,0,0,0.1);
+            --text-primary: #334155;
+            --text-secondary: #64748b;
+            --text-heading: #1e40af;
+            --text-heading-h2: #1e40af;
+            --border-primary: #e2e8f0;
+            --border-secondary: #cbd5e1;
+            --border-input: #cbd5e1;
+            --input-bg: #ffffff;
+            --input-text: #334155;
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.05);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.05);
+            --shadow-lg: 0 8px 16px rgba(0,0,0,0.15);
+            --shadow-button: 0 4px 8px rgba(0,0,0,0.1);
+            --btn-secondary-bg: #ffffff;
+            --btn-secondary-text: #475569;
+            --btn-secondary-border: #cbd5e1;
+            --btn-secondary-hover: #f8fafc;
+            --spinner-bg: #e2e8f0;
+            --success-bg: #d1fae5;
+            --success-text: #065f46;
+            --success-border: #10b981;
+            --error-bg: #fee2e2;
+            --error-text: #991b1b;
+            --error-border: #ef4444;
+            --speed-fast-bg: #d1fae5;
+            --speed-fast-text: #065f46;
+            --speed-medium-bg: #fef3c7;
+            --speed-medium-text: #92400e;
+            --speed-slow-bg: #fee2e2;
+            --speed-slow-text: #991b1b;
+            --social-link-bg: #ffffff;
+            --youtube-hover: #fef2f2;
+            --telegram-hover: #eff6ff;
+            --progress-bg: #e2e8f0;
+            --admin-btn-bg: #3b82f6;
+            --admin-btn-text: #ffffff;
+            --admin-dropdown-btn-bg: #ef4444;
+        }
+        [data-theme="dark"] {
+            /* 深色模式变量 */
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --bg-stat: #0f172a;
+            --bg-ip-list: #0f172a;
+            --bg-source: #0f172a;
+            --bg-modal: #1e293b;
+            --bg-admin-modal: #1e293b;
+            --bg-admin-dropdown: #1e293b;
+            --bg-overlay: rgba(0,0,0,0.7);
+            --bg-content-overlay: rgba(0,0,0,0.3);
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-heading: #60a5fa;
+            --text-heading-h2: #60a5fa;
+            --border-primary: #334155;
+            --border-secondary: #475569;
+            --border-input: #475569;
+            --input-bg: #334155;
+            --input-text: #ffffff;
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.3);
+            --shadow-lg: 0 8px 16px rgba(0,0,0,0.4);
+            --shadow-button: 0 4px 8px rgba(0,0,0,0.3);
+            --btn-secondary-bg: #334155;
+            --btn-secondary-text: #e2e8f0;
+            --btn-secondary-border: #475569;
+            --btn-secondary-hover: #475569;
+            --spinner-bg: #334155;
+            --success-bg: #064e3b;
+            --success-text: #6ee7b7;
+            --success-border: #10b981;
+            --error-bg: #7f1d1d;
+            --error-text: #fca5a5;
+            --error-border: #ef4444;
+            --speed-fast-bg: #064e3b;
+            --speed-fast-text: #6ee7b7;
+            --speed-medium-bg: #78350f;
+            --speed-medium-text: #fcd34d;
+            --speed-slow-bg: #7f1d1d;
+            --speed-slow-text: #fca5a5;
+            --social-link-bg: #1e293b;
+            --youtube-hover: #450a0a;
+            --telegram-hover: #172554;
+            --progress-bg: #334155;
+            --admin-btn-bg: #2563eb;
+            --admin-btn-text: #ffffff;
+            --admin-dropdown-btn-bg: #dc2626;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; background: #f8fafc; color: #334155; min-height: 100vh; padding: 20px; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            line-height: 1.6; 
+            background: var(--bg-primary); 
+            color: var(--text-primary); 
+            min-height: 100vh; 
+            padding: 20px;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
         .container { max-width: 1200px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; position: relative; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid var(--border-primary); position: relative; }
         .header-content h1 { font-size: 2.5rem; background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; font-weight: 700; }
-        .header-content p { color: #64748b; font-size: 1.1rem; }
+        [data-theme="dark"] .header-content h1 { background: linear-gradient(135deg, #60a5fa 0%, #22d3ee 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header-content p { color: var(--text-secondary); font-size: 1.1rem; }
         .social-links { display: flex; gap: 15px; }
-        .social-link { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: white; border: 1px solid #e2e8f0; transition: all 0.3s ease; text-decoration: none; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .social-link:hover { background: #f8fafc; transform: translateY(-2px); border-color: #cbd5e1; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .social-link { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: var(--social-link-bg); border: 1px solid var(--border-primary); transition: all 0.3s ease; text-decoration: none; box-shadow: var(--shadow-sm); }
+        .social-link:hover { background: var(--bg-hover); transform: translateY(-2px); border-color: var(--border-secondary); box-shadow: var(--shadow-button); }
         .social-link.youtube { color: #dc2626; }
-        .social-link.youtube:hover { background: #fef2f2; border-color: #fecaca; }
+        .social-link.youtube:hover { background: var(--youtube-hover); border-color: #dc2626; }
         .social-link.github { color: #1f2937; }
-        .social-link.telegram { color: #3b82f6; }
-		.social-link.telegram { display: inline-flex; align-items: center; justify-content: center; }
-		.social-link.telegram svg { display: block; transform: translate(-2.8px, -3.6px); }
-        .social-link.telegram:hover { background: #eff6ff; border-color: #bfdbfe; }
-        .admin-button { background: #3b82f6; color: white; border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: 0 2px 4px rgba(59,130,246,0.2); transition: all 0.3s ease; z-index: 101; }
+        [data-theme="dark"] .social-link.github { color: #e2e8f0; }
+        .social-link.telegram { color: #3b82f6; display: inline-flex; align-items: center; justify-content: center; }
+        .social-link.telegram svg { display: block; transform: translate(-2.8px, -3.6px); }
+        .social-link.telegram:hover { background: var(--telegram-hover); border-color: #3b82f6; }
+        .admin-button { background: var(--admin-btn-bg); color: var(--admin-btn-text); border: none; padding: 11px 20px; border-radius: 10px 10px 10px 10px; cursor: pointer; font-size: 0.95rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; position: absolute; right: 0; top: 30%; transform: translateY(-50%); min-width: 122px; max-width: 128px; box-shadow: var(--shadow-sm); transition: all 0.3s ease; z-index: 101; }
         .admin-button:hover { background: #2563eb; }
-        .admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -71px; background: white; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 100; min-width: 122px; max-width: 129px; overflow: hidden; }
-        .admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: #ef4444; min-width: 122px; max-width: 129px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
+        .admin-dropdown { display: none; position: absolute; right: 0; top: 100%; margin-top: -72px; background: var(--bg-admin-dropdown); border: 1px solid var(--border-primary); border-top: none; border-radius: 0 0 10px 10px; box-shadow: var(--shadow-lg); z-index: 100; min-width: 121px; max-width: 129px; overflow: hidden; }
+        .admin-dropdown button { width: 100%; padding: 11px 20px; border: none; background: var(--admin-dropdown-btn-bg); min-width: 121px; max-width: 129px; color: white; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.95rem; }
         .admin-dropdown button:hover { background: #dc2626;}
-        .card { background: white; border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .card h2 { font-size: 1.5rem; color: #1e40af; margin-bottom: 20px; font-weight: 600; }
+        .card { background: var(--bg-card); border-radius: 16px; padding: 30px; margin-bottom: 24px; border: 1px solid var(--border-primary); box-shadow: var(--shadow-md); transition: background 0.3s ease, border-color 0.3s ease; }
+        .card h2 { font-size: 1.5rem; color: var(--text-heading-h2); margin-bottom: 20px; font-weight: 600; transition: color 0.3s ease; }
         .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
-        .stat { background: #f8fafc; padding: 20px; border-radius: 12px; text-align: center; border: 1px solid #e2e8f0; }
+        .stat { background: var(--bg-stat); padding: 20px; border-radius: 12px; text-align: center; border: 1px solid var(--border-primary); transition: background 0.3s ease, border-color 0.3s ease; }
         .stat-value { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
         .stat-value.recent { color: #3b82f6; }
         .stat-value.total { color: #10b981; }
@@ -2513,50 +2626,107 @@ async function serveHTML(env, request) {
         .button-success:hover { background: #059669; border-color: #059669; box-shadow: 0 4px 8px rgba(16,185,129,0.3); }
         .button-warning { background: #f59e0b; border-color: #f59e0b; }
         .button-warning:hover { background: #d97706; border-color: #d97706; box-shadow: 0 4px 8px rgba(245,158,11,0.3); }
-        .button-secondary { background: white; color: #475569; border-color: #cbd5e1; }
-        .button-secondary:hover { background: #f8fafc; border-color: #94a3b8; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .button-secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-text); border-color: var(--btn-secondary-border); }
+        .button-secondary:hover { background: var(--btn-secondary-hover); border-color: var(--border-secondary); box-shadow: var(--shadow-button); }
         .ip-list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
         .sources-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
-        .ip-list { background: #f8fafc; border-radius: 12px; padding: 20px; max-height: 500px; overflow-y: auto; border: 1px solid #e2e8f0; }
-        .ip-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; transition: background 0.3s ease; }
-        .ip-item:hover { background: #f1f5f9; }
+        .ip-list { background: var(--bg-ip-list); border-radius: 12px; padding: 20px; max-height: 500px; overflow-y: auto; border: 1px solid var(--border-primary); transition: background 0.3s ease, border-color 0.3s ease; }
+        /* 自定义滚动条样式 */
+        .ip-list::-webkit-scrollbar { width: 8px; }
+        .ip-list::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 4px; }
+        .ip-list::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 4px; }
+        .ip-list::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+        /* ip-limit-input 样式 - 覆盖浏览器默认样式 */
+        #ip-limit-input {
+            background-color: var(--input-bg) !important;
+            color: var(--input-text) !important;
+            caret-color: var(--input-text);
+        }
+        /* 确保所有textarea在深色模式下使用正确的颜色 */
+        textarea[id$="-textarea"] {
+            background-color: var(--input-bg) !important;
+            color: var(--input-text) !important;
+            caret-color: var(--input-text);
+        }
+        /* placeholder文字颜色 */
+        #ip-limit-input::placeholder,
+        textarea[id$="-textarea"]::placeholder,
+        input[type="text"]::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.7;
+        }
+        /* 确保所有内联样式的input都使用正确的颜色 */
+        input[type="text"][id$="-input"] {
+            background-color: var(--input-bg) !important;
+            color: var(--input-text) !important;
+            caret-color: var(--input-text);
+        }
+        .ip-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-primary); transition: background 0.3s ease; }
+        .ip-item:hover { background: var(--bg-hover); }
         .ip-item:last-child { border-bottom: none; }
         .ip-info { display: flex; align-items: center; gap: 16px; }
-        .ip-address { font-family: 'SF Mono', 'Courier New', monospace; font-weight: 600; min-width: 140px; color: #1e293b; word-break: break-all; }
-        .speed-result { font-size: 0.85rem; padding: 4px 12px; border-radius: 8px; background: #e2e8f0; min-width: 70px; text-align: center; font-weight: 600; }
-        .speed-fast { background: #d1fae5; color: #065f46; }
-        .speed-medium { background: #fef3c7; color: #92400e; }
-        .speed-slow { background: #fee2e2; color: #991b1b; }
+        .ip-address { font-family: 'SF Mono', 'Courier New', monospace; font-weight: 600; min-width: 140px; color: var(--text-primary); word-break: break-all; transition: color 0.3s ease; }
+        .speed-result { font-size: 0.85rem; padding: 4px 12px; border-radius: 8px; background: var(--spinner-bg); min-width: 70px; text-align: center; font-weight: 600; transition: background 0.3s ease; }
+        .speed-fast { background: var(--speed-fast-bg); color: var(--speed-fast-text); }
+        .speed-medium { background: var(--speed-medium-bg); color: var(--speed-medium-text); }
+        .speed-slow { background: var(--speed-slow-bg); color: var(--speed-slow-text); }
         .action-buttons { display: flex; gap: 8px; }
-        .small-btn { padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; border: 1px solid #cbd5e1; background: white; color: #475569; cursor: pointer; transition: all 0.3s ease; }
-        .small-btn:hover { background: #f8fafc; border-color: #94a3b8; }
+        .small-btn { padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; border: 1px solid var(--border-secondary); background: var(--btn-secondary-bg); color: var(--btn-secondary-text); cursor: pointer; transition: all 0.3s ease; }
+        .small-btn:hover { background: var(--btn-secondary-hover); border-color: var(--border-secondary); }
         .small-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .loading { display: none; text-align: center; padding: 30px; }
-        .spinner { border: 3px solid #e2e8f0; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+        .spinner { border: 3px solid var(--spinner-bg); border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 16px; transition: border-color 0.3s ease; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .result { margin: 20px 0; padding: 16px 20px; border-radius: 12px; display: none; border-left: 4px solid; }
-        .success { background: #d1fae5; color: #065f46; border-left-color: #10b981; }
-        .error { background: #fee2e2; color: #991b1b; border-left-color: #ef4444; }
-        .speed-test-progress { margin: 16px 0; background: #e2e8f0; border-radius: 8px; height: 8px; overflow: hidden; display: none; }
+        .success { background: var(--success-bg); color: var(--success-text); border-left-color: var(--success-border); transition: background 0.3s ease, color 0.3s ease; }
+        .error { background: var(--error-bg); color: var(--error-text); border-left-color: var(--error-border); transition: background 0.3s ease, color 0.3s ease; }
+        .speed-test-progress { margin: 16px 0; background: var(--progress-bg); border-radius: 8px; height: 8px; overflow: hidden; display: none; transition: background 0.3s ease; }
         .speed-test-progress-bar { background: linear-gradient(90deg, #3b82f6, #06b6d4); height: 100%; width: 0%; transition: width 0.3s ease; }
         .sources { display: grid; gap: 12px; }
-        .source { padding: 12px 16px; background: #f8fafc; border-radius: 8px; border-left: 4px solid #10b981; }
+        .source { padding: 12px 16px; background: var(--bg-source); border-radius: 8px; border-left: 4px solid #10b981; transition: background 0.3s ease; }
         .source.error { border-left-color: #ef4444; }
-        .footer { text-align: center; margin-top: 40px; padding-top: 30px; border-top: 1px solid #e2e8f0; color: #64748b; }
+        /* 更新结果展示样式 */
+        .update-result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+        .update-result-item { padding: 12px; border-radius: 8px; border-left: 4px solid; }
+        .update-result-item.info { border-left-color: #3b82f6; background: #dbeafe; }
+        .update-result-item.success { border-left-color: #10b981; background: #d1fae5; }
+        .update-result-item.warning { border-left-color: #f59e0b; background: #fef3c7; }
+        .update-result-item.error { border-left-color: #ef4444; background: #fee2e2; }
+        .update-result-item.primary { border-left-color: #0ea5e9; background: #e0f2fe; }
+        .update-result-item.secondary { border-left-color: #a855f7; background: #f3e8ff; }
+        [data-theme="dark"] .update-result-item.info { background: #1e3a8a; }
+        [data-theme="dark"] .update-result-item.success { background: #064e3b; }
+        [data-theme="dark"] .update-result-item.warning { background: #a16207; }
+        [data-theme="dark"] .update-result-item.error { background: #7f1d1d; }
+        [data-theme="dark"] .update-result-item.primary { background: #0c4a6e; }
+        [data-theme="dark"] .update-result-item.secondary { background: #581c87; }
+        .update-result-label { font-weight: 600; color: var(--text-primary); }
+        .update-result-title { margin: 16px 0 12px 0; color: var(--text-heading); font-weight: 600; }
+        .footer { text-align: center; margin-top: 40px; padding-top: 30px; border-top: 1px solid var(--border-primary); color: var(--text-secondary); transition: border-color 0.3s ease, color 0.3s ease; }
         .footer-logo { width: 16px; height: 16px; vertical-align: middle; margin-right: 2px; transform: translateY(-2px); }
-        .admin-overlay { ${showSetPassword || showLogin ? 'display: flex;' : 'display: none;'} position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 9999; justify-content: center; align-items: center; }
-        .content-overlay { ${!showAdminButton && (showSetPassword || showLogin) ? 'display: block;' : 'display: none;'} position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.1); backdrop-filter: blur(12px); z-index: 1; pointer-events: none; }
+        .admin-overlay { ${showSetPassword || showLogin ? 'display: flex;' : 'display: none;'} position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); backdrop-filter: blur(5px); z-index: 9999; justify-content: center; align-items: center; transition: background 0.3s ease; }
+        .content-overlay { ${!showAdminButton && (showSetPassword || showLogin) ? 'display: block;' : 'display: none;'} position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-content-overlay); backdrop-filter: blur(12px); z-index: 1; pointer-events: none; transition: background 0.3s ease; }
         .container { ${!showAdminButton && (showSetPassword || showLogin) ? 'filter: blur(8px); pointer-events: none; user-select: none;' : ''} transition: filter 0.3s ease; }
-        .admin-modal { background: white; padding: 40px; border-radius: 16px; max-width: 400px; width: 90%; text-align: center; border: 1px solid #e2e8f0; box-shadow: 0 20px 25px rgba(0,0,0,0.1); }
-        .admin-modal h3 { margin-bottom: 20px; color: #1e40af; }
-        .admin-modal input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 16px; font-size: 1rem; }
+        .admin-modal { background: var(--bg-admin-modal); padding: 40px; border-radius: 16px; max-width: 400px; width: 90%; text-align: center; border: 1px solid var(--border-primary); box-shadow: var(--shadow-md); transition: background 0.3s ease, border-color 0.3s ease; }
+        .admin-modal h3 { margin-bottom: 20px; color: var(--text-heading); transition: color 0.3s ease; }
+        .admin-modal input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border-input); background: var(--bg-secondary); color: var(--text-primary); margin-bottom: 16px; font-size: 1rem; transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease; }
         .admin-modal button { padding: 12px 24px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; margin: 0 8px; }
         .admin-modal .btn-primary { background: #3b82f6; color: white; }
-        .admin-modal .btn-secondary { background: white; color: #475569; border: 1px solid #cbd5e1; }
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 1000; justify-content: center; align-items: center; }
-        .modal-content { background: white; padding: 30px; border-radius: 16px; max-width: 500px; width: 90%; border: 1px solid #e2e8f0; box-shadow: 0 20px 25px rgba(0,0,0,0.1); }
-        .modal h3 { margin-bottom: 16px; color: #1e40af; }
+        .admin-modal .btn-secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-text); border: 1px solid var(--btn-secondary-border); transition: background 0.3s ease, color 0.3s ease; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); backdrop-filter: blur(5px); z-index: 1000; justify-content: center; align-items: center; transition: background 0.3s ease; }
+        .modal-content { background: var(--bg-modal); padding: 30px; border-radius: 16px; max-width: 500px; width: 90%; border: 1px solid var(--border-primary); box-shadow: var(--shadow-md); transition: background 0.3s ease, border-color 0.3s ease; }
+        .modal h3 { margin-bottom: 16px; color: var(--text-heading); transition: color 0.3s ease; }
         .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
+        /* 主题切换按钮样式 */
+        .theme-toggle { cursor: pointer; border: none; background: var(--social-link-bg); }
+        .theme-toggle:hover { background: var(--bg-hover); }
+        .theme-toggle #theme-icon { font-size: 1.2rem; display: block; }
+        /* 主题下拉菜单样式 */
+        .theme-dropdown { display: none; position: absolute; right: 60px; top: 60px; background: var(--bg-card); border: 1px solid var(--border-primary); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 100; min-width: 140px; overflow: hidden; }
+        .theme-dropdown.show { display: block; }
+        .theme-dropdown button { width: 100%; padding: 10px 16px; border: none; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; font-size: 0.9rem; transition: background 0.2s ease; }
+        .theme-dropdown button:hover { background: var(--bg-hover); }
+        .theme-dropdown button.active { background: var(--bg-hover); font-weight: 600; }
         @media (max-width: 768px) {
             .header { flex-direction: column; gap: 20px; text-align: center; }
             .header-content h1 { font-size: 2rem; }
@@ -2566,14 +2736,14 @@ async function serveHTML(env, request) {
             .ip-info { width: 100%; justify-content: space-between; }
             .action-buttons { width: 100%; justify-content: flex-end; }
             .modal-buttons { flex-direction: column; }
-            .admin-dropdown { margin-top: -156px !important; min-width: 122px; }
+            .admin-dropdown { margin-top: -157px !important; min-width: 121px; }
             .admin-modal { padding: 20px; }
             #ip-limit-input { width: 100% !important; min-width: 298px !important; max-width: none !important; flex: 1; }
             .footer-logo { width: 16px; height: 16px; }
         }
     </style>
 </head>
-<body class="${showAdminButton ? 'authenticated' : 'unauthenticated'}">
+<body class="${showAdminButton ? 'authenticated' : 'unauthenticated'}" data-theme="light">
     ${!showAdminButton && (showSetPassword || showLogin) ? '<div class="content-overlay"></div>' : ''}
     <div class="container">
         <div class="header">
@@ -2608,6 +2778,9 @@ async function serveHTML(env, request) {
                         <path d="m7.06510669 16.9258959c5.22739451-2.1065178 8.71314291-3.4952633 10.45724521-4.1662364 4.9797665-1.9157646 6.0145193-2.2485535 6.6889567-2.2595423.1483363-.0024169.480005.0315855.6948461.192827.1814076.1361492.23132.3200675.2552048.4491519.0238847.1290844.0536269.4231419.0299841.65291-.2698553 2.6225356-1.4375148 8.986738-2.0315537 11.9240228-.2513602 1.2428753-.7499132 1.5088847-1.2290685 1.5496672-1.0413153.0886298-1.8284257-.4857912-2.8369905-1.0972863-1.5782048-.9568691-2.5327083-1.3984317-4.0646293-2.3321592-1.7703998-1.0790837-.212559-1.583655.7963867-2.5529189.2640459-.2536609 4.7753906-4.3097041 4.755976-4.431706-.0070494-.0442984-.1409018-.481649-.2457499-.5678447-.104848-.0861957-.2595946-.0567202-.3712641-.033278-.1582881.0332286-2.6794907 1.5745492-7.5636077 4.6239616-.715635.4545193-1.3638349.6759763-1.9445998.6643712-.64024672-.0127938-1.87182452-.334829-2.78737602-.6100966-1.11296117-.3376271-1.53748501-.4966332-1.45976769-1.0700283.04048-.2986597.32581586-.610598.8560076-.935815z"/>
                     </svg>
                 </a>
+                <button class="social-link theme-toggle" onclick="toggleTheme()" title="切换主题" aria-label="切换主题">
+                    <span id="theme-icon">🌙</span>
+                </button>
             </div>
             ${showAdminButton ? `
             <div class="admin-panel">
@@ -2632,7 +2805,7 @@ async function serveHTML(env, request) {
                 <button class="button button-warning" onclick="startSpeedTest()" id="speedtest-btn">⚡ 开始测速</button>
                 <button class="button" onclick="openPathModal()">⛓️ 设置路径</button>
                 <button class="button button-secondary" onclick="refreshData()">🔄 刷新状态</button>
-                <input type="number" id="ip-limit-input" min="1" placeholder="IP数量" style="padding: 12px; border-radius: 10px; border: 1px solid #cbd5e1; min-width: 120px; max-width: 158px; font-size: 0.95rem;" value="${data.limit || ''}">
+                <input type="number" id="ip-limit-input" min="1" placeholder="IP数量" style="padding: 12px; border-radius: 10px; border: 1px solid var(--border-input); background: var(--input-bg); color: var(--input-text); min-width: 120px; max-width: 158px; font-size: 0.95rem;" value="${data.limit || ''}">
                 <button class="button" onclick="setIpLimit()" id="set-limit-btn">⚙️ 设置数量</button>
             </div>
             <div class="loading" id="loading"><div class="spinner"></div><p>正在从多个来源收集 IP/域名 地址，请稍候...</p></div>
@@ -2749,7 +2922,7 @@ async function serveHTML(env, request) {
         <div class="modal-content">
             <h3>⛓️ 设置路径</h3>
             <p>输入路径，如 */*/*，保存后下载和查看链接将使用此路径。</p>
-            <input type="text" id="path-input" placeholder="e.g. */*/*" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 16px;">
+            <input type="text" id="path-input" placeholder="e.g. */*/*" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-input); background: var(--input-bg); color: var(--input-text); margin-bottom: 16px;">
             <div class="modal-buttons">
                 <button class="button button-secondary" onclick="closePathModal()">取消</button>
                 <button class="button button-success" onclick="savePath()">保存</button>
@@ -2760,7 +2933,7 @@ async function serveHTML(env, request) {
         <div class="modal-content">
             <h3>⚙️ 设置数据来源</h3>
             <p>编辑来源 URL，每行一个。保存后将使用这些来源更新 IP/域名。</p>
-            <textarea id="sources-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${(data.sources_urls || []).join('\\n')}</textarea>
+            <textarea id="sources-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-input); background: var(--input-bg); color: var(--input-text);">${(data.sources_urls || []).join('\\n')}</textarea>
             <div class="modal-buttons">
                 <button class="button button-secondary" onclick="closeSourcesModal()">取消</button>
                 <button class="button button-success" onclick="saveSources()">保存</button>
@@ -2772,7 +2945,7 @@ async function serveHTML(env, request) {
             <h3>◼️ 黑名单管理</h3>
             <p>输入需要排除的 IPv4/IPv6/域名 地址，每行一个。保存后将在所有页面中过滤这些地址。</p>
             <p><strong>增强功能：</strong> 用双引号包围域名（如 "example.com"）将过滤所有该域名的子域名（如 sub.example.com）。</p>
-            <textarea id="blacklist-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1;">${data.blacklist.join('\\n')}</textarea>
+            <textarea id="blacklist-textarea" rows="10" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-input); background: var(--input-bg); color: var(--input-text);">${data.blacklist.join('\\n')}</textarea>
             <div class="modal-buttons">
                 <button class="button button-secondary" onclick="closeBlacklistModal()">取消</button>
                 <button class="button button-success" onclick="saveBlacklist()">保存</button>
@@ -2780,6 +2953,117 @@ async function serveHTML(env, request) {
         </div>
     </div>
     <script>
+        // ==================== 主题管理 ====================
+        const ThemeManager = {
+            STORAGE_KEY: 'cf-ip-collector-theme',
+            currentTheme: 'light',
+            init() {
+                const savedTheme = localStorage.getItem(this.STORAGE_KEY);
+                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                if (savedTheme) {
+                    this.currentTheme = savedTheme;
+                } else {
+                    // 如果没有保存的主题，使用系统偏好
+                    this.currentTheme = systemPrefersDark ? 'dark' : 'light';
+                }
+                this.applyTheme(this.currentTheme);
+                this.updateThemeIcon();
+                // 监听系统主题变化
+                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+                    if (!localStorage.getItem(this.STORAGE_KEY)) {
+                        this.currentTheme = e.matches ? 'dark' : 'light';
+                        this.applyTheme(this.currentTheme);
+                        this.updateThemeIcon();
+                    }
+                });
+            },
+            applyTheme(theme) {
+                document.body.setAttribute('data-theme', theme);
+                this.currentTheme = theme;
+                // 更新 meta theme-color
+                const themeColor = theme === 'dark' ? '#0f172a' : '#3b82f6';
+                document.querySelector('meta[name="theme-color"]').setAttribute('content', themeColor);
+            },
+            toggle() {
+                const themes = ['light', 'dark', 'system'];
+                const currentIndex = themes.indexOf(this.currentTheme);
+                const nextIndex = (currentIndex + 1) % themes.length;
+                const nextTheme = themes[nextIndex];
+                if (nextTheme === 'system') {
+                    localStorage.removeItem(this.STORAGE_KEY);
+                    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    this.applyTheme(systemPrefersDark ? 'dark' : 'light');
+                } else {
+                    localStorage.setItem(this.STORAGE_KEY, nextTheme);
+                    this.applyTheme(nextTheme);
+                }
+                this.currentTheme = nextTheme;
+                this.updateThemeIcon();
+                // 显示提示
+                this.showThemeNotification(nextTheme);
+            },
+            updateThemeIcon() {
+                const icon = document.getElementById('theme-icon');
+                if (!icon) return;
+                const icons = {
+                    'light': '☀️',
+                    'dark': '🌙',
+                    'system': '💻'
+                };
+                // 如果是system，根据当前实际显示的主题显示对应图标
+                let displayTheme = this.currentTheme;
+                if (displayTheme === 'system') {
+                    displayTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                icon.textContent = icons[displayTheme];
+            },
+            showThemeNotification(theme) {
+                const messages = {
+                    'light': '已切换到浅色模式 ☀️',
+                    'dark': '已切换到深色模式 🌙',
+                    'system': '已切换到系统模式 💻'
+                };
+                // 创建临时通知
+                const notification = document.createElement('div');
+                notification.style.cssText = [
+                    'position: fixed',
+                    'top: 20px',
+                    'right: 20px',
+                    'background: var(--bg-card)',
+                    'color: var(--text-primary)',
+                    'padding: 12px 20px',
+                    'border-radius: 8px',
+                    'box-shadow: var(--shadow-lg)',
+                    'border: 1px solid var(--border-primary)',
+                    'z-index: 10000',
+                    'font-size: 0.9rem',
+                    'animation: slideIn 0.3s ease'
+                ].join(';') + ';';
+                notification.textContent = messages[theme];
+                
+                // 添加动画样式
+                if (!document.getElementById('theme-notification-style')) {
+                    const style = document.createElement('style');
+                    style.id = 'theme-notification-style';
+                    style.textContent = '@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }';
+                    document.head.appendChild(style);
+                }
+                document.body.appendChild(notification);
+                // 3秒后移除
+                setTimeout(() => {
+                    notification.style.animation = 'slideIn 0.3s ease reverse';
+                    setTimeout(() => notification.remove(), 300);
+                }, 2000);
+            }
+        };
+        // 页面加载时初始化主题
+        document.addEventListener('DOMContentLoaded', () => {
+            ThemeManager.init();
+        });
+        // 主题切换函数（供按钮调用）
+        function toggleTheme() {
+            ThemeManager.toggle();
+        }
         // HTML转义函数（客户端版本）
         function escapeHtml(text) {
           if (text === null || text === undefined) return '';
@@ -3277,58 +3561,58 @@ async function serveHTML(env, request) {
                     // 构建你要求的两列布局格式
                     let resultHtml = '<h3>✅ 更新成功！</h3>';
                     // 创建两列布局容器
-                    resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0;">';
+                    resultHtml += '<div class="update-result-grid">';
                     // 左列
                     resultHtml += '<div style="display: flex; flex-direction: column; gap: 8px;">';
-                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6;">';
-                    resultHtml += '<div style="font-weight: 600; color: #1e40af;">⏱️ 耗时：' + escapeHtml(data.duration) + '</div>';
+                    resultHtml += '<div class="update-result-item info">';
+                    resultHtml += '<div class="update-result-label">⏱️ 耗时：' + escapeHtml(data.duration) + '</div>';
                     resultHtml += '</div>';
-                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                    resultHtml += '<div style="font-weight: 600; color: #059669;">🌐 总地址数：' + escapeHtml(data.totalIPs) + '</div>';
+                    resultHtml += '<div class="update-result-item success">';
+                    resultHtml += '<div class="update-result-label">🌐 总地址数：' + escapeHtml(data.totalIPs) + '</div>';
                     resultHtml += '</div>';
-                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
-                    resultHtml += '<div style="font-weight: 600; color: #d97706;">📍 新位置测试：' + escapeHtml(data.newLocationTested) + '</div>';
+                    resultHtml += '<div class="update-result-item warning">';
+                    resultHtml += '<div class="update-result-label">📍 新位置测试：' + escapeHtml(data.newLocationTested) + '</div>';
                     resultHtml += '</div>';
-                    resultHtml += '<div style="background: #f8fafc; padding: 12px; border-radius: 8px; border-left: 4px solid #0ea5e9;">';
-                    resultHtml += '<div style="font-weight: 600; color: #7c3aed;">⚡ 新延迟测试：' + escapeHtml(data.newLatencyTested) + '</div>';
+                    resultHtml += '<div class="update-result-item primary">';
+                    resultHtml += '<div class="update-result-label">⚡ 新延迟测试：' + escapeHtml(data.newLatencyTested) + '</div>';
                     resultHtml += '</div>';
                     resultHtml += '</div>';
                     // 右列
                     resultHtml += '<div style="display: flex; flex-direction: column; gap: 8px;">';
                     if (data.locationFailedCount !== undefined) {
-                        resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
-                        resultHtml += '<div style="font-weight: 600; color: #dc2626;">❌ 位置失败数量：' + escapeHtml(data.locationFailedCount) + '</div>';
+                        resultHtml += '<div class="update-result-item error">';
+                        resultHtml += '<div class="update-result-label">❌ 位置失败数量：' + escapeHtml(data.locationFailedCount) + '</div>';
                         resultHtml += '</div>';
                     }
                     if (data.locationRetryCount !== undefined) {
-                        resultHtml += '<div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
-                        resultHtml += '<div style="font-weight: 600; color: #d97706;">📍 位置重试次数：' + escapeHtml(data.locationRetryCount) + '</div>';
+                        resultHtml += '<div class="update-result-item warning">';
+                        resultHtml += '<div class="update-result-label">📍 位置重试次数：' + escapeHtml(data.locationRetryCount) + '</div>';
                         resultHtml += '</div>';
                     }
                     if (data.latencyFailedCount !== undefined) {
-                        resultHtml += '<div style="background: #fee2e2; padding: 12px; border-radius: 8px; border-left: 4px solid #ef4444;">';
-                        resultHtml += '<div style="font-weight: 600; color: #dc2626;">❌ 延迟失败数量：' + escapeHtml(data.latencyFailedCount) + '</div>';
+                        resultHtml += '<div class="update-result-item error">';
+                        resultHtml += '<div class="update-result-label">❌ 延迟失败数量：' + escapeHtml(data.latencyFailedCount) + '</div>';
                         resultHtml += '</div>';
                     }
                     if (data.latencyRetryCount !== undefined) {
-                        resultHtml += '<div style="background: #e0f2fe; padding: 12px; border-radius: 8px; border-left: 4px solid #0ea5e9;">';
-                        resultHtml += '<div style="font-weight: 600; color: #0284c7;">⚡ 延迟重试次数：' + escapeHtml(data.latencyRetryCount) + '</div>';
+                        resultHtml += '<div class="update-result-item primary">';
+                        resultHtml += '<div class="update-result-label">⚡ 延迟重试次数：' + escapeHtml(data.latencyRetryCount) + '</div>';
                         resultHtml += '</div>';
                     }
                     resultHtml += '</div>';
                     resultHtml += '</div>';
                     // 退避策略统计（如果有）
                     if (data.locationTotalDelay !== undefined || data.latencyTotalDelay !== undefined) {
-                        resultHtml += '<h4 style="margin: 16px 0 12px 0; color: #059669; font-weight: 600;">⏱️ 退避策略统计</h4>';
-                        resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">';
+                        resultHtml += '<h4 class="update-result-title">⏱️ 退避策略统计</h4>';
+                        resultHtml += '<div class="update-result-grid">';
                         if (data.locationTotalDelay !== undefined) {
-                            resultHtml += '<div style="background: #f3e8ff; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
-                            resultHtml += '<div style="font-weight: 600; color: #d97706;">📍 位置总延迟：' + escapeHtml(data.locationTotalDelay) + 'ms</div>';
+                            resultHtml += '<div class="update-result-item warning">';
+                            resultHtml += '<div class="update-result-label">📍 位置总延迟：' + escapeHtml(data.locationTotalDelay) + 'ms</div>';
                             resultHtml += '</div>';
                         }
                         if (data.latencyTotalDelay !== undefined) {
-                            resultHtml += '<div style="background: #f3e8ff; padding: 12px; border-radius: 8px; border-left: 4px solid #0ea5e9;">';
-                            resultHtml += '<div style="font-weight: 600; color: #7c3aed;">⚡ 延迟总延迟：' + escapeHtml(data.latencyTotalDelay) + 'ms</div>';
+                            resultHtml += '<div class="update-result-item primary">';
+                            resultHtml += '<div class="update-result-label">⚡ 延迟总延迟：' + escapeHtml(data.latencyTotalDelay) + 'ms</div>';
                             resultHtml += '</div>';
                         }
                         resultHtml += '</div>';
@@ -3347,49 +3631,48 @@ async function serveHTML(env, request) {
                         //}
                     }
                     // 地址成功率统计（新增）- 三列布局
-                    resultHtml += '<h4 style="margin: 16px 0 12px 0; color: #059669; font-weight: 600;">📊 地址成功率统计</h4>';
-                    resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; background: #f0fdf4; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
+                    resultHtml += '<h4 class="update-result-title">📊 地址成功率统计</h4>';
+                    resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">';
                     if (data.addressSuccessRates) {
                         // IPv4 - 始终显示
-                        resultHtml += '<div style="background: #dbeafe; padding: 12px; border-radius: 8px; border-left: 4px solid #3b82f6;">';
-                        resultHtml += '<div style="font-weight: 600; color: #1e40af; font-size: 0.9rem;">📍 IPv4 地址成功率</div>';
-                        resultHtml += '<div style="font-size: 0.9rem; color: #059669; font-weight: 600;">' + escapeHtml(data.addressSuccessRates.ipv4 || '本次未测试') + '</div>';
+                        resultHtml += '<div class="update-result-item info">';
+                        resultHtml += '<div class="update-result-label" style="font-size: 0.9rem;">📍 IPv4 地址成功率</div>';
+                        resultHtml += '<div style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 600;">' + escapeHtml(data.addressSuccessRates.ipv4 || '本次未测试') + '</div>';
                         resultHtml += '</div>';
                         // IPv6 - 始终显示
-                        resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                        resultHtml += '<div style="font-weight: 600; color: #059669; font-size: 0.9rem;">📍 IPv6 地址成功率</div>';
-                        resultHtml += '<div style="font-size: 0.9rem; color: #059669; font-weight: 600;">' + escapeHtml(data.addressSuccessRates.ipv6 || '本次未测试') + '</div>';
+                        resultHtml += '<div class="update-result-item success">';
+                        resultHtml += '<div class="update-result-label" style="font-size: 0.9rem;">📍 IPv6 地址成功率</div>';
+                        resultHtml += '<div style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 600;">' + escapeHtml(data.addressSuccessRates.ipv6 || '本次未测试') + '</div>';
                         resultHtml += '</div>';
                         // 域名 - 始终显示
-                        resultHtml += '<div style="background: #fef3c7; padding: 12px; border-radius: 8px; border-left: 4px solid #f59e0b;">';
-                        resultHtml += '<div style="font-weight: 600; color: #d97706; font-size: 0.9rem;">🌐 域名成功率</div>';
-                        resultHtml += '<div style="font-size: 0.9rem; color: #059669; font-weight: 600;">' + escapeHtml(data.addressSuccessRates.domain || '本次未测试') + '</div>';
+                        resultHtml += '<div class="update-result-item warning">';
+                        resultHtml += '<div class="update-result-label" style="font-size: 0.9rem;">🌐 域名成功率</div>';
+                        resultHtml += '<div style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 600;">' + escapeHtml(data.addressSuccessRates.domain || '本次未测试') + '</div>';
                         resultHtml += '</div>';
                     } else {
-                        resultHtml += '<div style="color: #6b7280; padding: 8px; grid-column: 1 / -1;">暂无地址成功率数据</div>';
+                        resultHtml += '<div style="color: var(--text-secondary); padding: 8px; grid-column: 1 / -1;">暂无地址成功率数据</div>';
                     }
 					resultHtml += '</div>';
-                    resultHtml += '</div>';
                     // 有效结果统计（如果有）
                     if (data.validLocations !== undefined || data.validLatencies !== undefined) {
-                        resultHtml += '<h4 style="margin: 16px 0 12px 0; color: #059669; font-weight: 600;">✅ 有效结果</h4>';
-                        resultHtml += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">';
+                        resultHtml += '<h4 class="update-result-title">✅ 有效结果</h4>';
+                        resultHtml += '<div class="update-result-grid">';
                         if (data.validLocations !== undefined) {
-                            resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                            resultHtml += '<div style="font-weight: 600; color: #059669;">📍 有效位置：' + escapeHtml(data.validLocations) + '</div>';
+                            resultHtml += '<div class="update-result-item success">';
+                            resultHtml += '<div class="update-result-label">📍 有效位置：' + escapeHtml(data.validLocations) + '</div>';
                             resultHtml += '</div>';
                         }
                         if (data.validLatencies !== undefined) {
-                            resultHtml += '<div style="background: #d1fae5; padding: 12px; border-radius: 8px; border-left: 4px solid #10b981;">';
-                            resultHtml += '<div style="font-weight: 600; color: #059669;">⚡ 有效延迟：' + escapeHtml(data.validLatencies) + '</div>';
+                            resultHtml += '<div class="update-result-item success">';
+                            resultHtml += '<div class="update-result-label">⚡ 有效延迟：' + escapeHtml(data.validLatencies) + '</div>';
                             resultHtml += '</div>';
                         }
                         resultHtml += '</div>';
                     }
                     // 其他信息
-                    resultHtml += '<div style="margin-top: 16px; padding: 12px; background: #f1f5f9; border-radius: 8px;">';
-                    resultHtml += '<div style="font-size: 0.9rem; color: #64748b;">';
-                    resultHtml += '<div>📅 历史键: <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">' + escapeHtml(data.historyKey || '—') + '</code></div>';
+                    resultHtml += '<div style="margin-top: 16px; padding: 12px; background: var(--bg-stat); border: 1px solid var(--border-primary); border-radius: 8px;">';
+                    resultHtml += '<div style="font-size: 0.9rem; color: var(--text-secondary);">';
+                    resultHtml += '<div>📅 历史键: <code style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; color: var(--text-primary);">' + escapeHtml(data.historyKey || '—') + '</code></div>';
                     resultHtml += '<div>🕐 时间: ' + new Date(data.timestamp).toLocaleString() + '</div>';
                     resultHtml += '</div>';
                     resultHtml += '</div>';
