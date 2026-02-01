@@ -38,6 +38,14 @@ export default {
     }
   }
 };
+
+/* ====================== 关键词（中英文） ====================== */
+const KEYWORDS = [
+  "地址", "公共地址", "域名", "IP", "Host", "host", "域名地址",
+  "Address", "Public Address", "Domain", "IP Address", "Hostname",
+  "IPv6", "ipv6", "IPV6", "IPv4", "ipv4", "IPV4"
+];
+
 async function handleFavicon() {
   try {
     // 您的 base64 favicon 数据
@@ -1010,12 +1018,6 @@ function isBlacklisted(address, blacklistPreprocessed) {
   }
   return false;
 }
-/* ====================== 关键词（中英文） ====================== */
-const KEYWORDS = [
-  "地址", "公共地址", "域名", "IP", "Host", "host", "域名地址",
-  "Address", "Public Address", "Domain", "IP Address", "Hostname",
-  "IPv6", "ipv6", "IPV6", "IPv4", "ipv4", "IPV4"
-];
 /* ====================== 核心：更新 + 自动测速 ====================== */
 async function handleUpdate(env) {
   const startTime = Date.now();
@@ -1141,7 +1143,6 @@ async function handleUpdate(env) {
   }
   // 5) 需要测试的新地理位置与新延迟信息，采用分块-分波并发控制
   const CHUNK_SIZE = 4; // 从6降至4，减少单次处理量
-  const MAX_WAVES = 1;   // 同时并发执行的批次数量
   // 内部 helpers - 增加资源监控和错误处理
   async function batchInWaves(items, batchFn) {
     if (!items || items.length === 0) return { results: [], lastBatchSize: 0 };
@@ -1531,9 +1532,6 @@ async function updateAllAddresses(env) {
 // 增强地理位置获取，处理 IPv4、IPv6 和域名
 async function getLocationsForAddresses(addresses, env) {
   if (!addresses || addresses.length === 0) return [];
-  // 成功率统计相关常量
-  const SUCCESS_STATS_KEY = "batch_success_stats";
-  const MAX_WAVES = 1;
   // 获取默认批次大小
   function getDefaultBatchSize(addressType) {
     switch (addressType) {
@@ -1543,75 +1541,9 @@ async function getLocationsForAddresses(addresses, env) {
       default: return 3;
     }
   }
-  // 计算成功率
-  function calculateSuccessRate(stats, addressType) {
-    const typeStats = stats[addressType];
-    if (!typeStats || typeStats.totalBatches === 0) return 0;
-    return (typeStats.successfulBatches / typeStats.totalBatches * 100).toFixed(1);
-  }
-// 动态批次大小计算函数（修改版：使用地址级成功率）
-  function calculateDynamicBatchSize(addressType, stats, baseSize) {
-    const typeStats = stats[addressType];
-    // 检查是否有足够的地址数据（而不是批次数据）
-    if (!typeStats || typeStats.totalAddresses < 10) {
-      // 地址数据不足，使用默认值
-      console.log(`[批处理优化] ${addressType}: 地址数据不足（${typeStats?.totalAddresses || 0} < 10），使用默认批次大小=${baseSize}`);
-      return baseSize;
-    }
-    // 计算地址成功率（而不是批次成功率）
-    const recentSuccessRate = typeStats.recentSuccess.filter(s => s).length / typeStats.recentSuccess.length;
-    const overallSuccessRate = typeStats.totalAddresses > 0 
-      ? (typeStats.successfulAddresses / typeStats.totalAddresses)
-      : 0;
-    // 综合成功率（最近成功率权重更高）
-    const combinedSuccessRate = recentSuccessRate * 0.7 + overallSuccessRate * 0.3;
-    // 动态调整策略
-    let adjustmentFactor = 1.0;
-    if (combinedSuccessRate > 0.9) {
-      // 高成功率：可以增加批次大小
-      adjustmentFactor = 1.2 + (combinedSuccessRate - 0.9) * 2; // 最大 1.4 倍
-    } else if (combinedSuccessRate > 0.7) {
-      // 中等成功率：保持当前大小
-      adjustmentFactor = 1.0;
-    } else if (combinedSuccessRate > 0.5) {
-      // 低成功率：减少批次大小
-      adjustmentFactor = 0.8 - (0.7 - combinedSuccessRate); // 最小 0.6 倍
-    } else {
-      // 很低成功率：大幅减少批次大小
-      adjustmentFactor = 0.5;
-    }
-    // 应用调整因子，并限制在合理范围内
-    const adjustedSize = Math.round(baseSize * adjustmentFactor);
-    // IPv6 强制限制为每批1个地址，因为API不支持批量测试
-    const minSize = addressType === 'ipv4' ? 5 : addressType === 'ipv6' ? 1 : 2; // 从8降至5
-    const maxSize = addressType === 'ipv4' ? 40 : addressType === 'ipv6' ? 1 : 10; // 从64/16降至40/10
-    const dynamicChunkSize = Math.max(minSize, Math.min(maxSize, adjustedSize));
-    console.log(`[批处理优化] ${addressType}: 基础大小=${baseSize}, 调整后=${dynamicChunkSize}, 成功率=${(combinedSuccessRate * 100).toFixed(2)}%, 调整因子=${adjustmentFactor.toFixed(2)}`);
-    return dynamicChunkSize;
-  }
-  // 获取成功率统计
-  async function getSuccessStats() {
-    let raw = null;
-    try {
-      if (env.IP_STORAGE) {
-        raw = await env.IP_STORAGE.get(SUCCESS_STATS_KEY);
-      }
-    } catch (e) {
-      console.warn('IP_STORAGE KV 存储访问失败，使用内存存储:', e);
-    }
-    if (!raw) {
-      return initializeSuccessStats();
-    }
-    try {
-      return JSON.parse(raw);
-    } catch (e) {
-      console.warn('解析成功率统计失败，使用默认值:', e);
-      return initializeSuccessStats();
-    }
-  }
 // 更新成功率统计（修改版：统计地址级成功率）
   async function updateSuccessStats(addressType, batchResults) {
-    const stats = await getSuccessStats();
+    const stats = await getSuccessStats(env);
     const typeStats = stats[addressType];
     // 修改：统计地址级别的成功/失败，而不是批次级别的
     let totalAddresses = 0;
@@ -1665,7 +1597,7 @@ async function getLocationsForAddresses(addresses, env) {
   async function batchInWavesWithStats(items, batchFn, addressType) {
     if (!items || items.length === 0) return [];
     // 获取当前成功率统计
-    const stats = await getSuccessStats();
+    const stats = await getSuccessStats(env);
     const baseSize = getDefaultBatchSize(addressType);
     const dynamicChunkSize = calculateDynamicBatchSize(addressType, stats, baseSize);
     console.log(`[动态调整] ${addressType} 批次大小: ${baseSize} -> ${dynamicChunkSize}`);
@@ -2508,10 +2440,10 @@ async function serveHTML(env, request) {
             --btn-secondary-border: #cbd5e1;
             --btn-secondary-hover: #f8fafc;
             --spinner-bg: #e2e8f0;
-            --success-bg: #d1fae5;
+            --success-bg: rgba(16, 185, 129, 0.07);
             --success-text: #065f46;
             --success-border: #10b981;
-            --error-bg: #fee2e2;
+            --error-bg: rgba(239, 68, 68, 0.07);
             --error-text: #991b1b;
             --error-border: #ef4444;
             --speed-fast-bg: #d1fae5;
@@ -2560,18 +2492,18 @@ async function serveHTML(env, request) {
             --btn-secondary-border: #475569;
             --btn-secondary-hover: #475569;
             --spinner-bg: #334155;
-            --success-bg: #064e3b;
+            --success-bg: rgba(16, 185, 129, 0.15);
             --success-text: #6ee7b7;
             --success-border: #10b981;
-            --error-bg: #7f1d1d;
+            --error-bg: rgba(239, 68, 68, 0.15);
             --error-text: #fca5a5;
             --error-border: #ef4444;
             --speed-fast-bg: #064e3b;
             --speed-fast-text: #6ee7b7;
-            --speed-medium-bg: #78350f;
+            --speed-medium-bg: #b16336;
             --speed-medium-text: #fcd34d;
-            --speed-slow-bg: #7f1d1d;
-            --speed-slow-text: #fca5a5;
+            --speed-slow-bg: #991b1b;
+            --speed-slow-text: #ffcece;
             --social-link-bg: #1e293b;
             --youtube-hover: #450a0a;
             --telegram-hover: #172554;
@@ -3674,8 +3606,9 @@ async function serveHTML(env, request) {
                     resultHtml += '<div style="font-size: 0.9rem; color: var(--text-secondary);">';
                     resultHtml += '<div>📅 历史键: <code style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; color: var(--text-primary);">' + escapeHtml(data.historyKey || '—') + '</code></div>';
                     resultHtml += '<div>🕐 时间: ' + new Date(data.timestamp).toLocaleString() + '</div>';
+resultHtml += '</div>';
                     resultHtml += '</div>';
-                    resultHtml += '</div>';
+                    result.className = 'result success';
                     result.innerHTML = resultHtml;
                 } else {
                     result.className = 'result error';
