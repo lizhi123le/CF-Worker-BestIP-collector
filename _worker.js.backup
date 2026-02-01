@@ -2491,7 +2491,7 @@ async function serveHTML(env, request) {
             --btn-secondary-hover: #475569;
             --spinner-bg: #334155;
             --success-bg: rgba(16, 185, 129, 0.07);
-            --success-text: #065f46;
+            --success-text: #17f2b4;
             --success-border: #10b981;
             --error-bg: rgba(239, 68, 68, 0.07);
             --error-text: #fca5a5;
@@ -2618,17 +2618,17 @@ async function serveHTML(env, request) {
         /* 更新结果展示样式 */
         .update-result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
         .update-result-item { padding: 12px; border-radius: 8px; border-left: 4px solid; }
-        .update-result-item.info { border-left-color: #3b82f6; background: #dbeafe; }
+        .update-result-item.info { border-left-color: #3b82f6; background: #91c1ff; }
         .update-result-item.success { border-left-color: #10b981; background: #d1fae5; }
         .update-result-item.warning { border-left-color: #f59e0b; background: #fef3c7; }
         .update-result-item.error { border-left-color: #ef4444; background: #fee2e2; }
-        .update-result-item.primary { border-left-color: #0ea5e9; background: #e0f2fe; }
+        .update-result-item.primary { border-left-color: #0ea5e9; background: #a6dcff; }
         .update-result-item.secondary { border-left-color: #a855f7; background: #f3e8ff; }
-        [data-theme="dark"] .update-result-item.info { background: #1e3a8a; }
+        [data-theme="dark"] .update-result-item.info { background: #3253ad; }
         [data-theme="dark"] .update-result-item.success { background: #064e3b; }
         [data-theme="dark"] .update-result-item.warning { background: #a16207; }
         [data-theme="dark"] .update-result-item.error { background: #7f1d1d; }
-        [data-theme="dark"] .update-result-item.primary { background: #0c4a6e; }
+        [data-theme="dark"] .update-result-item.primary { background: #12608d; }
         [data-theme="dark"] .update-result-item.secondary { background: #581c87; }
         .update-result-label { font-weight: 600; color: var(--text-primary); }
         .update-result-title { margin: 16px 0 12px 0; color: var(--text-heading); font-weight: 600; }
