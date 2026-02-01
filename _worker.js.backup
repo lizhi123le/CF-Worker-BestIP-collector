@@ -1975,8 +1975,8 @@ async function cleanupOldIPs(env) {
   let cursor = null;
   const now = Date.now();
   // 配置区 —— 建议这样最安全
-  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;   // 最多保留 2 天
-  const MIN_KEEP_COUNT = 6;                      // 强制保留最新 6 条
+  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;     // 最多保留 2 天
+  const MIN_KEEP_COUNT = 12;                      // 强制保留最新 12 条
   const MAX_TOTAL_SIZE = 1 * 1024 * 1024;         // 总大小不超过 1MB（留足余量）
   const items = [];
   // 第一步：收集所有历史 key
@@ -2019,12 +2019,14 @@ async function cleanupOldIPs(env) {
       totalSize -= details[i].size;
     }
   }
-  // 阶段2：如果还超总大小，继续删最旧的（绝不删前 MIN_KEEP_COUNT 条）
-  for (let i = details.length - 1; i >= MIN_KEEP_COUNT; i--) {
-    if (totalSize <= MAX_TOTAL_SIZE) break;
-    if (!toDelete.has(details[i].name)) {
-      toDelete.add(details[i].name);
-      totalSize -= details[i].size;
+  // 阶段2：如果还超总大小，只保留 MIN_KEEP_COUNT 条最新的，其余全部删除
+  if (totalSize > MAX_TOTAL_SIZE) {
+    console.log(`[清理] 总大小 ${Math.round(totalSize / 1024)} KB 超过限制 ${MAX_TOTAL_SIZE / 1024} KB，将只保留最新 ${MIN_KEEP_COUNT} 条`);
+    for (let i = MIN_KEEP_COUNT; i < details.length; i++) {
+      if (!toDelete.has(details[i].name)) {
+        toDelete.add(details[i].name);
+        totalSize -= details[i].size;
+      }
     }
   }
   if (toDelete.size > 0) {
