@@ -2622,7 +2622,7 @@ async function serveHTML(env, request) {
         .update-result-item.success { border-left-color: #10b981; background: #d1fae5; }
         .update-result-item.warning { border-left-color: #f59e0b; background: #fef3c7; }
         .update-result-item.error { border-left-color: #ef4444; background: #fee2e2; }
-        .update-result-item.primary { border-left-color: #0ea5e9; background: #a6dcff; }
+        .update-result-item.primary { border-left-color: #0ea5e9; background: #a1caff; }
         .update-result-item.secondary { border-left-color: #a855f7; background: #f3e8ff; }
         [data-theme="dark"] .update-result-item.info { background: #3253ad; }
         [data-theme="dark"] .update-result-item.success { background: #064e3b; }
