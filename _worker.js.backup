@@ -1975,9 +1975,9 @@ async function cleanupOldIPs(env) {
   let cursor = null;
   const now = Date.now();
   // 配置区 —— 建议这样最安全
-  const MAX_AGE_MS       = 2 * 24 * 60 * 60 * 1000;   // 最多保留 2 天
-  const MIN_KEEP_COUNT   = 10;                      // 强制保留最新 10 条
-  const MAX_TOTAL_SIZE   = 1 * 1024 * 1024;         // 总大小不超过 1MB（留足余量）
+  const MAX_AGE_MS  = 2 * 24 * 60 * 60 * 1000;   // 最多保留 2 天
+  const MIN_KEEP_COUNT = 6;                      // 强制保留最新 10 条
+  const MAX_TOTAL_SIZE = 1 * 1024 * 1024;         // 总大小不超过 1MB（留足余量）
   const items = [];
   // 第一步：收集所有历史 key
   do {
@@ -2622,7 +2622,7 @@ async function serveHTML(env, request) {
         .update-result-item.success { border-left-color: #10b981; background: #d1fae5; }
         .update-result-item.warning { border-left-color: #f59e0b; background: #fef3c7; }
         .update-result-item.error { border-left-color: #ef4444; background: #fee2e2; }
-        .update-result-item.primary { border-left-color: #0ea5e9; background: #a1caff; }
+        .update-result-item.primary { border-left-color: #0ea5e9; background: #a6dcff; }
         .update-result-item.secondary { border-left-color: #a855f7; background: #f3e8ff; }
         [data-theme="dark"] .update-result-item.info { background: #3253ad; }
         [data-theme="dark"] .update-result-item.success { background: #064e3b; }
