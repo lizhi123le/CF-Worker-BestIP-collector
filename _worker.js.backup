@@ -38,14 +38,12 @@ export default {
     }
   }
 };
-
 /* ====================== 关键词（中英文） ====================== */
 const KEYWORDS = [
-  "地址", "公共地址", "域名", "IP", "Host", "host", "域名地址",
-  "Address", "Public Address", "Domain", "IP Address", "Hostname",
+  "地址", "公共地址", "域名", "IP", "Host", "host", "域名地址", "线路", "线路名称",
+  "Address", "Public Address", "Domain", "IP Address", "Hostname", "Line", "Line Name",
   "IPv6", "ipv6", "IPV6", "IPv4", "ipv4", "IPV4"
 ];
-
 async function handleFavicon() {
   try {
     // 您的 base64 favicon 数据
@@ -2492,10 +2490,10 @@ async function serveHTML(env, request) {
             --btn-secondary-border: #475569;
             --btn-secondary-hover: #475569;
             --spinner-bg: #334155;
-            --success-bg: rgba(16, 185, 129, 0.15);
-            --success-text: #6ee7b7;
+            --success-bg: rgba(16, 185, 129, 0.07);
+            --success-text: #065f46;
             --success-border: #10b981;
-            --error-bg: rgba(239, 68, 68, 0.15);
+            --error-bg: rgba(239, 68, 68, 0.07);
             --error-text: #fca5a5;
             --error-border: #ef4444;
             --speed-fast-bg: #064e3b;
