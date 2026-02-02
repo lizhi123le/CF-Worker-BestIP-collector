@@ -89,15 +89,15 @@ async function handleFavicon() {
 const SUCCESS_STATS_KEY = "batch_success_stats";
 const MAX_BATCH_SIZE = 31;
 const MIN_BATCH_SIZE = 1;
-const SUCCESS_HISTORY_LENGTH = 10;
+const SUCCESS_HISTORY_LENGTH = 6;
 const MAX_WAVES = 2; // 从2降至1，进一步减少并发压力
   // 获取默认批次大小
   function getDefaultBatchSize(addressType) {
     switch (addressType) {
-      case 'ipv4': return 20;  // 从29降至20，减少并发压力
+      case 'ipv4': return 26;  // 从29降至20，减少并发压力
       case 'ipv6': return 1;    // IPv6 每批只处理单个地址，因为API不支持批量测试
-      case 'domain': return 3;   // 从4降至3，减少API调用
-      default: return 3;         // 从5降至3
+      case 'domain': return 4;   // 从4降至3，减少API调用
+      default: return 5;         // 从5降至3
     }
   }
 // 初始化成功率统计对象（添加地址级统计）
@@ -108,7 +108,7 @@ function initializeSuccessStats() {
             successfulAddresses: 0,    // 新增：成功地址数
             totalBatches: 0,
             successfulBatches: 0,
-            avgBatchSize: 20,
+            avgBatchSize: 26,
             lastUpdated: new Date().toISOString(),
             recentSuccess: []
         },
@@ -126,7 +126,7 @@ function initializeSuccessStats() {
             successfulAddresses: 0,
             totalBatches: 0,
             successfulBatches: 0,
-            avgBatchSize: 3,
+            avgBatchSize: 4,
             lastUpdated: new Date().toISOString(),
             recentSuccess: []
         }
@@ -1028,9 +1028,9 @@ async function handleUpdate(env) {
   };
   // 指数退避配置 - 优化以减少资源消耗
   const RETRY_CONFIG = {
-    initialDelay: [1200, 1500],    // 增加到1.2-1.5秒
-    maxDelay: [4000, 6000],         // 减少到4-6秒
-    backoffFactor: [1.3, 1.8],      // 减少退避因子
+    initialDelay: [1100, 1200],    // 增加到1.2-1.5秒
+    maxDelay: [5000, 8000],         // 减少到4-6秒
+    backoffFactor: [1.5, 2.2],      // 减少退避因子
     maxRetries: 1,                   // 从2降至1
     jitter: true
   };
@@ -1534,10 +1534,10 @@ async function getLocationsForAddresses(addresses, env) {
   // 获取默认批次大小
   function getDefaultBatchSize(addressType) {
     switch (addressType) {
-      case 'ipv4': return 20;
+      case 'ipv4': return 26;
       case 'ipv6': return 1;
-      case 'domain': return 3;
-      default: return 3;
+      case 'domain': return 4;
+      default: return 5;
     }
   }
   // 更新成功率统计（修改版：统计地址级成功率）
