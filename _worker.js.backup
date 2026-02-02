@@ -1789,9 +1789,9 @@ async function getLocationsForAddresses(addresses, env) {
       }
     };
     await batchInWavesWithStats(ipv4Addresses, ipv4BatchFn, 'ipv4');
-    // 批次间延迟
+    // 批次间延迟（优化：从3.86-5.37秒降至0.5-1秒）
     if (ipv4Addresses.length > 0) {
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1510) + 3860));
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 500) + 500));
     }
   }
   // IPv6 - 每批只处理单个地址，直接使用单个IP API端点
@@ -1834,9 +1834,9 @@ async function getLocationsForAddresses(addresses, env) {
       }
     };
     await batchInWavesWithStats(ipv6Addresses, ipv6BatchFn, 'ipv6');
-    // 批次间延迟
+    // 批次间延迟（优化：从0.98-1.03秒降至0.3-0.5秒）
     if (ipv6Addresses.length > 0) {
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 980));
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200) + 300));
     }
   }
   // 域名 DoH + 国家代码 - 使用动态批次大小（修改版：返回每个地址的结果）
@@ -1844,10 +1844,10 @@ async function getLocationsForAddresses(addresses, env) {
     console.log(`开始处理 ${domainAddresses.length} 个域名地址`);
     const domainBatchFn = async (batchDomains) => {
       const batchIndices = domainIndices.slice(domainAddresses.indexOf(batchDomains[0]), domainAddresses.indexOf(batchDomains[0]) + batchDomains.length);
-      const results = [];
-      for (let j = 0; j < batchDomains.length; j++) {
-        const domain = batchDomains[j];
-        const idx = batchIndices[j];
+      
+      // 并行处理域名（每批3-5个，使用Promise.all）
+      const CONCURRENCY = 4; // 同时处理4个域名
+      const processDomain = async (domain, idx, index) => {
         let success = false;
         let location = null;
         try {
@@ -1882,14 +1882,37 @@ async function getLocationsForAddresses(addresses, env) {
           console.error("Domain location failed for", domain, e);
           success = false;
         }
-        results.push({
+        return {
           address: domain,
           success: success,
-          location: location
+          location: location,
+          index: index
+        };
+      };
+      
+      // 分批并行处理
+      const results = new Array(batchDomains.length);
+      for (let i = 0; i < batchDomains.length; i += CONCURRENCY) {
+        const chunk = batchDomains.slice(i, i + CONCURRENCY);
+        const chunkIndices = batchIndices.slice(i, i + CONCURRENCY);
+        
+        const promises = chunk.map((domain, j) => processDomain(domain, chunkIndices[j], i + j));
+        const chunkResults = await Promise.all(promises);
+        
+        chunkResults.forEach(result => {
+          results[result.index] = {
+            address: result.address,
+            success: result.success,
+            location: result.location
+          };
         });
-        // 域名处理间隔
-        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 380));
+        
+        // 批次间短暂延迟（优化：从380-440ms降至100-200ms）
+        if (i + CONCURRENCY < batchDomains.length) {
+          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 100));
+        }
       }
+      
       return results;
     };
     await batchInWavesWithStats(domainAddresses, domainBatchFn, 'domain');
