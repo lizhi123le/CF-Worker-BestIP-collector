@@ -831,6 +831,21 @@ function extractAddressesFromHTML(html, sourceUrl = null) {
         loc = null;
       }
     }
+    // 修复：检查IPv6是否是从更长地址中部分匹配出来的
+    if (addr.startsWith('[') && addr.includes('::')) {
+      // 获取原始匹配位置
+      const matchIndex = combinedMatch.index;
+      // 向前检查，确保不是从更长的IPv6地址中间截取的
+      const contextStart = Math.max(0, matchIndex - 30);
+      const contextBefore = html.substring(contextStart, matchIndex);
+      // 如果前面有方括号开头且后面跟着hex字符，说明当前匹配可能是部分匹配
+      const fullIPv6Match = contextBefore.match(/\[([0-9a-fA-F:]{10,})$/);
+      if (fullIPv6Match && addr.length < fullIPv6Match[1].length + 2) {
+        // 这是一个部分匹配，跳过
+        console.log(`[IPv6修复] 跳过部分匹配: ${addr}, 完整地址应为: [${fullIPv6Match[1]}]`);
+        continue;
+      }
+    }
     if (isValidAddressWithPort(addr)) {
       const parsed = parseAddressWithPort(addr);
       if (parsed.type === 'domain' && !isWhitelistedDomain(parsed.address)) continue;
@@ -840,7 +855,7 @@ function extractAddressesFromHTML(html, sourceUrl = null) {
       }
     }
   }
-  // ipv6WithBrackets
+  // ipv6WithBrackets（增强：防止部分匹配）
   let ipv6Match;
   while ((ipv6Match = patterns.ipv6WithBrackets.exec(html)) !== null) {
     const fullMatch = ipv6Match[0];
@@ -854,6 +869,17 @@ function extractAddressesFromHTML(html, sourceUrl = null) {
       if (loc) loc += '_IPv6';
     }
     const standardAddr = `[${ipInside}]${portStr}`;
+    // 修复：检查是否是完整IPv6地址的一部分（防止误抓）
+    const matchIndex = ipv6Match.index;
+    // 向后检查，确保后面没有更多的hex段
+    const contextEnd = Math.min(html.length, matchIndex + fullMatch.length + 30);
+    const contextAfter = html.substring(matchIndex, contextEnd);
+    // 如果当前匹配后面紧跟着hex字符和冒号，说明是部分匹配
+    const extendedMatch = contextAfter.match(/^\[[0-9a-fA-F:]+\][0-9a-fA-F:]/);
+    if (extendedMatch) {
+      console.log(`[IPv6修复] ipv6WithBrackets跳过部分匹配: ${standardAddr}`);
+      continue;
+    }
     if (isValidIPv6(ipInside)) {
       if (!map.has(standardAddr)) {
         map.set(standardAddr, loc);
