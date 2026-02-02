@@ -1260,7 +1260,7 @@ async function handleUpdate(env) {
     console.log(`Test complete: Valid=${stats.validResults}, Failed=${stats.failedCount}, Retries=${stats.retryCount}, Total delay=${stats.totalDelayTime}ms`);
     return { results: finalResults, stats: stats, retryConfig: usedRetryConfig, lastBatchSizeUsed, lastBatchCountsUsed };
   }
-  // 7) 执行测试
+  // 7) 执行测试（优化：地区测试和延迟测试并行执行）
   let locationStats = { totalTested: 0, validResults: 0, retryCount: 0, failedCount: 0, totalDelayTime: 0 };
   let latencyStats = { totalTested: 0, validResults: 0, retryCount: 0, failedCount: 0, totalDelayTime: 0 };
   let locationRetryConfig = null;
@@ -1271,31 +1271,52 @@ async function handleUpdate(env) {
   let latencyLastBatchSize = 0;
   let locationLastBatchCounts = { ipv4:0, ipv6:0, domain:0 };
   let latencyLastBatchCounts = { ipv4:0, ipv6:0, domain:0 };
+  
+  // 构建并行测试任务
+  const testPromises = [];
+  
   if (needLocationTest && needLocationTest.length > 0) {
-    console.log(`\n=== LOCATION TESTS ===`);
-    const locationResult = await testWithRetry(
-      needLocationTest,
-      batch => getLocationsForAddresses(batch, env),
-      isValidLocation
+    console.log(`\n=== 启动地区测试（并行）: ${needLocationTest.length} 个地址 ===`);
+    testPromises.push(
+      testWithRetry(
+        needLocationTest,
+        batch => getLocationsForAddresses(batch, env),
+        isValidLocation
+      ).then(locationResult => {
+        newLocations = locationResult.results;
+        locationStats = locationResult.stats;
+        locationRetryConfig = locationResult.retryConfig;
+        locationLastBatchSize = locationResult.lastBatchSizeUsed || 0;
+        locationLastBatchCounts = locationResult.lastBatchCountsUsed || { ipv4:0, ipv6:0, domain:0 };
+        console.log(`✓ 地区测试完成: ${locationStats.validResults}/${locationStats.totalTested} 成功`);
+      })
     );
-    newLocations = locationResult.results;
-    locationStats = locationResult.stats;
-    locationRetryConfig = locationResult.retryConfig;
-    locationLastBatchSize = locationResult.lastBatchSizeUsed || 0;
-    locationLastBatchCounts = locationResult.lastBatchCountsUsed || { ipv4:0, ipv6:0, domain:0 };
   }
+  
   if (needLatencyTest && needLatencyTest.length > 0) {
-    console.log(`\n=== LATENCY TESTS ===`);
-    const latencyResult = await testWithRetry(
-      needLatencyTest,
-      batch => batchTestLatency(batch),
-      result => result && result.success && isValidLatency(result.latency)
+    console.log(`\n=== 启动延迟测试（并行）: ${needLatencyTest.length} 个地址 ===`);
+    testPromises.push(
+      testWithRetry(
+        needLatencyTest,
+        batch => batchTestLatency(batch),
+        result => result && result.success && isValidLatency(result.latency)
+      ).then(latencyResult => {
+        newLatencies = latencyResult.results;
+        latencyStats = latencyResult.stats;
+        latencyRetryConfig = latencyResult.retryConfig;
+        latencyLastBatchSize = latencyResult.lastBatchSizeUsed || 0;
+        latencyLastBatchCounts = latencyResult.lastBatchCountsUsed || { ipv4:0, ipv6:0, domain:0 };
+        console.log(`✓ 延迟测试完成: ${latencyStats.validResults}/${latencyStats.totalTested} 成功`);
+      })
     );
-    newLatencies = latencyResult.results;
-    latencyStats = latencyResult.stats;
-    latencyRetryConfig = latencyResult.retryConfig;
-    latencyLastBatchSize = latencyResult.lastBatchSizeUsed || 0;
-    latencyLastBatchCounts = latencyResult.lastBatchCountsUsed || { ipv4:0, ipv6:0, domain:0 };
+  }
+  
+  // 并行执行所有测试（如果有的话）
+  if (testPromises.length > 0) {
+    console.log(`\n>>> 开始并行执行 ${testPromises.length} 个测试任务...`);
+    const parallelStartTime = Date.now();
+    await Promise.all(testPromises);
+    console.log(`>>> 并行测试总耗时: ${Date.now() - parallelStartTime}ms`);
   }
   // 8) 合并信息，保持与原有逻辑一致的映射关系
   const finalAddresses = [];
@@ -1844,7 +1865,6 @@ async function getLocationsForAddresses(addresses, env) {
     console.log(`开始处理 ${domainAddresses.length} 个域名地址`);
     const domainBatchFn = async (batchDomains) => {
       const batchIndices = domainIndices.slice(domainAddresses.indexOf(batchDomains[0]), domainAddresses.indexOf(batchDomains[0]) + batchDomains.length);
-      
       // 并行处理域名（每批3-5个，使用Promise.all）
       const CONCURRENCY = 4; // 同时处理4个域名
       const processDomain = async (domain, idx, index) => {
@@ -1889,16 +1909,13 @@ async function getLocationsForAddresses(addresses, env) {
           index: index
         };
       };
-      
       // 分批并行处理
       const results = new Array(batchDomains.length);
       for (let i = 0; i < batchDomains.length; i += CONCURRENCY) {
         const chunk = batchDomains.slice(i, i + CONCURRENCY);
         const chunkIndices = batchIndices.slice(i, i + CONCURRENCY);
-        
         const promises = chunk.map((domain, j) => processDomain(domain, chunkIndices[j], i + j));
         const chunkResults = await Promise.all(promises);
-        
         chunkResults.forEach(result => {
           results[result.index] = {
             address: result.address,
@@ -1906,13 +1923,11 @@ async function getLocationsForAddresses(addresses, env) {
             location: result.location
           };
         });
-        
         // 批次间短暂延迟（优化：从380-440ms降至100-200ms）
         if (i + CONCURRENCY < batchDomains.length) {
           await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 100));
         }
       }
-      
       return results;
     };
     await batchInWavesWithStats(domainAddresses, domainBatchFn, 'domain');
@@ -3005,7 +3020,6 @@ async function serveHTML(env, request) {
                     'animation: slideIn 0.3s ease'
                 ].join(';') + ';';
                 notification.textContent = messages[theme];
-                
                 // 添加动画样式
                 if (!document.getElementById('theme-notification-style')) {
                     const style = document.createElement('style');
