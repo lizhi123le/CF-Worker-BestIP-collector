@@ -1271,10 +1271,8 @@ async function handleUpdate(env) {
   let latencyLastBatchSize = 0;
   let locationLastBatchCounts = { ipv4:0, ipv6:0, domain:0 };
   let latencyLastBatchCounts = { ipv4:0, ipv6:0, domain:0 };
-  
   // 构建并行测试任务
   const testPromises = [];
-  
   if (needLocationTest && needLocationTest.length > 0) {
     console.log(`\n=== 启动地区测试（并行）: ${needLocationTest.length} 个地址 ===`);
     testPromises.push(
@@ -1292,7 +1290,6 @@ async function handleUpdate(env) {
       })
     );
   }
-  
   if (needLatencyTest && needLatencyTest.length > 0) {
     console.log(`\n=== 启动延迟测试（并行）: ${needLatencyTest.length} 个地址 ===`);
     testPromises.push(
@@ -1310,7 +1307,6 @@ async function handleUpdate(env) {
       })
     );
   }
-  
   // 并行执行所有测试（如果有的话）
   if (testPromises.length > 0) {
     console.log(`\n>>> 开始并行执行 ${testPromises.length} 个测试任务...`);
@@ -1818,15 +1814,12 @@ async function getLocationsForAddresses(addresses, env) {
   // IPv6 - 优化：批次内并行处理多个地址（每批5个并发）
   if (ipv6Addresses.length > 0) {
     console.log(`开始处理 ${ipv6Addresses.length} 个 IPv6 地址（每批5个并发）`);
-    
     // 将IPv6分批，每批5个
     const IPV6_BATCH_SIZE = 5;
     for (let i = 0; i < ipv6Addresses.length; i += IPV6_BATCH_SIZE) {
       const batch = ipv6Addresses.slice(i, i + IPV6_BATCH_SIZE);
       const batchIndices = ipv6Indices.slice(i, i + IPV6_BATCH_SIZE);
-      
       console.log(`[IPv6批次] 处理 ${batch.length} 个地址 (${i+1}-${Math.min(i+IPV6_BATCH_SIZE, ipv6Addresses.length)}/${ipv6Addresses.length})`);
-      
       // 批次内并行处理
       const promises = batch.map(async (ip, j) => {
         const idx = batchIndices[j];
@@ -1862,15 +1855,12 @@ async function getLocationsForAddresses(addresses, env) {
           };
         }
       });
-      
       await Promise.all(promises);
-      
       // 批次间短暂延迟（优化：降至100-200ms）
       if (i + IPV6_BATCH_SIZE < ipv6Addresses.length) {
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 100));
       }
     }
-    
     console.log(`[IPv6] 完成处理 ${ipv6Addresses.length} 个地址`);
   }
   // 域名 DoH + 国家代码 - 使用动态批次大小（修改版：返回每个地址的结果）
