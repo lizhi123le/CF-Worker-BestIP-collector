@@ -90,7 +90,7 @@ const SUCCESS_STATS_KEY = "batch_success_stats";
 const MAX_BATCH_SIZE = 31;
 const MIN_BATCH_SIZE = 1;
 const SUCCESS_HISTORY_LENGTH = 6;
-const MAX_WAVES = 2; // 从2降至1，进一步减少并发压力
+const MAX_WAVES = 3; // 优化：每波次处理3个批次，平衡并发与稳定性
   // 获取默认批次大小
   function getDefaultBatchSize(addressType) {
     switch (addressType) {
@@ -233,9 +233,9 @@ async function batchInWavesWithStats(items, batchFn, addressType, env) {
         });
         const waveResults = await Promise.all(promises);
         waveResults.forEach(wr => results.push(...wr));
-        // 波次间延迟
+        // 波次间延迟（优化：从980-1031ms降至200-300ms）
         if (i + MAX_WAVES < chunks.length) {
-            await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 980));
+            await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 200));
         }
     }
     // 更新成功率统计
@@ -1815,50 +1815,63 @@ async function getLocationsForAddresses(addresses, env) {
       await new Promise(r => setTimeout(r, Math.floor(Math.random() * 500) + 500));
     }
   }
-  // IPv6 - 每批只处理单个地址，直接使用单个IP API端点
+  // IPv6 - 优化：批次内并行处理多个地址（每批5个并发）
   if (ipv6Addresses.length > 0) {
-    console.log(`开始处理 ${ipv6Addresses.length} 个 IPv6 地址（每批单个）`);
-    const ipv6BatchFn = async (batchIps) => {
-      // 由于每批只有1个IP，直接处理
-      const ip = batchIps[0];
-      const idx = ipv6Indices[ipv6Addresses.indexOf(ip)];
-      try {
-        const resp = await fetchWithRetry(`https://ipinfo.io/${ip}/json`, {
-          method: "GET",
-          headers: { "Accept": "application/json" }
-        }, 3, 400);
-        if (resp.ok) {
-          const data = await resp.json();
-          const success = !!(data?.country);
-          if (success && idx < locs.length) {
-            locs[idx] = data.country + '_IPv6';
+    console.log(`开始处理 ${ipv6Addresses.length} 个 IPv6 地址（每批5个并发）`);
+    
+    // 将IPv6分批，每批5个
+    const IPV6_BATCH_SIZE = 5;
+    for (let i = 0; i < ipv6Addresses.length; i += IPV6_BATCH_SIZE) {
+      const batch = ipv6Addresses.slice(i, i + IPV6_BATCH_SIZE);
+      const batchIndices = ipv6Indices.slice(i, i + IPV6_BATCH_SIZE);
+      
+      console.log(`[IPv6批次] 处理 ${batch.length} 个地址 (${i+1}-${Math.min(i+IPV6_BATCH_SIZE, ipv6Addresses.length)}/${ipv6Addresses.length})`);
+      
+      // 批次内并行处理
+      const promises = batch.map(async (ip, j) => {
+        const idx = batchIndices[j];
+        try {
+          const resp = await fetchWithRetry(`https://ipinfo.io/${ip}/json`, {
+            method: "GET",
+            headers: { "Accept": "application/json" }
+          }, 2, 300); // 减少重试次数到2，超时300ms
+          if (resp.ok) {
+            const data = await resp.json();
+            const success = !!(data?.country);
+            if (success && idx < locs.length) {
+              locs[idx] = data.country + '_IPv6';
+            }
+            return {
+              address: ip,
+              success: success,
+              country: data?.country || null
+            };
+          } else {
+            return {
+              address: ip,
+              success: false,
+              error: `HTTP ${resp.status}`
+            };
           }
-          return [{
-            address: ip,
-            success: success,
-            country: data?.country || null
-          }];
-        } else {
-          return [{
+        } catch (e) {
+          console.error("Location IPv6 request failed:", ip, e.message);
+          return {
             address: ip,
             success: false,
-            error: `HTTP ${resp.status}`
-          }];
+            error: e.message
+          };
         }
-      } catch (e) {
-        console.error("Location IPv6 individual request failed:", e);
-        return [{
-          address: ip,
-          success: false,
-          error: e.message
-        }];
+      });
+      
+      await Promise.all(promises);
+      
+      // 批次间短暂延迟（优化：降至100-200ms）
+      if (i + IPV6_BATCH_SIZE < ipv6Addresses.length) {
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 100));
       }
-    };
-    await batchInWavesWithStats(ipv6Addresses, ipv6BatchFn, 'ipv6');
-    // 批次间延迟（优化：从0.98-1.03秒降至0.3-0.5秒）
-    if (ipv6Addresses.length > 0) {
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200) + 300));
     }
+    
+    console.log(`[IPv6] 完成处理 ${ipv6Addresses.length} 个地址`);
   }
   // 域名 DoH + 国家代码 - 使用动态批次大小（修改版：返回每个地址的结果）
   if (domainAddresses.length > 0) {
