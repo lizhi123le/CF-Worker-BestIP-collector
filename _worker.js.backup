@@ -90,7 +90,7 @@ const SUCCESS_STATS_KEY = "batch_success_stats";
 const MAX_BATCH_SIZE = 31;
 const MIN_BATCH_SIZE = 1;
 const SUCCESS_HISTORY_LENGTH = 10;
-const MAX_WAVES = 1; // 从2降至1，进一步减少并发压力
+const MAX_WAVES = 2; // 从2降至1，进一步减少并发压力
   // 获取默认批次大小
   function getDefaultBatchSize(addressType) {
     switch (addressType) {
@@ -1140,7 +1140,8 @@ async function handleUpdate(env) {
     return latency !== null && latency !== undefined && typeof latency === 'number' && latency > 0;
   }
   // 5) 需要测试的新地理位置与新延迟信息，采用分块-分波并发控制
-  const CHUNK_SIZE = 4; // 从6降至4，减少单次处理量
+  const CHUNK_SIZE = 6; // 单次处理量
+  const MAX_WAVES = 1;  // 并发数
   // 内部 helpers - 增加资源监控和错误处理
   async function batchInWaves(items, batchFn) {
     if (!items || items.length === 0) return { results: [], lastBatchSize: 0 };
@@ -1539,7 +1540,7 @@ async function getLocationsForAddresses(addresses, env) {
       default: return 3;
     }
   }
-// 更新成功率统计（修改版：统计地址级成功率）
+  // 更新成功率统计（修改版：统计地址级成功率）
   async function updateSuccessStats(addressType, batchResults) {
     const stats = await getSuccessStats(env);
     const typeStats = stats[addressType];
@@ -1591,7 +1592,7 @@ async function getLocationsForAddresses(addresses, env) {
       : 0;
     console.log(`[统计更新] ${addressType}: 地址成功率 ${typeStats.successfulAddresses}/${typeStats.totalAddresses} (${successRate}%)`);
   }
-// 增强的批处理函数，带地址级别的成功率统计（修改版）
+  // 增强的批处理函数，带地址级别的成功率统计（修改版）
   async function batchInWavesWithStats(items, batchFn, addressType) {
     if (!items || items.length === 0) return [];
     // 获取当前成功率统计
@@ -1741,7 +1742,7 @@ async function getLocationsForAddresses(addresses, env) {
       domainIndices.push(idx); 
     }
   });
-// IPv4 - 使用动态批次大小（修改版：返回每个地址的结果）
+  // IPv4 - 使用动态批次大小（修改版：返回每个地址的结果）
   if (ipv4Addresses.length > 0) {
     console.log(`开始处理 ${ipv4Addresses.length} 个 IPv4 地址`);
     const ipv4BatchFn = async (batchIps) => {
@@ -1793,7 +1794,7 @@ async function getLocationsForAddresses(addresses, env) {
       await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1510) + 3860));
     }
   }
-// IPv6 - 每批只处理单个地址，直接使用单个IP API端点
+  // IPv6 - 每批只处理单个地址，直接使用单个IP API端点
   if (ipv6Addresses.length > 0) {
     console.log(`开始处理 ${ipv6Addresses.length} 个 IPv6 地址（每批单个）`);
     const ipv6BatchFn = async (batchIps) => {
@@ -1838,7 +1839,7 @@ async function getLocationsForAddresses(addresses, env) {
       await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 980));
     }
   }
-// 域名 DoH + 国家代码 - 使用动态批次大小（修改版：返回每个地址的结果）
+  // 域名 DoH + 国家代码 - 使用动态批次大小（修改版：返回每个地址的结果）
   if (domainAddresses.length > 0) {
     console.log(`开始处理 ${domainAddresses.length} 个域名地址`);
     const domainBatchFn = async (batchDomains) => {
@@ -1918,20 +1919,29 @@ async function testIPLatency(addressWithPort, timeout = 8000) {
     return { success: false, latency: null };
   }
   let attempts = 0;
-  const maxAttempts = 1;
+  const maxAttempts = 2; // 增加重试次数，第二次使用备用地址
   let formattedAddress = addressWithPort;
   const parsed = parseAddressWithPort(addressWithPort);
   if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
     formattedAddress = `[${parsed.address}]:${parsed.port}`;
   }
+  // 定义主备测速地址
+  const primaryUrl = "https://cachefly.cachefly.net/1mb.test";
+  const backupUrl = "https://speed.cloudflare.com/__down?bytes=50000";
+  const primaryHost = "cachefly.cachefly.net";
+  const backupHost = "speed.cloudflare.com";
   while (attempts < maxAttempts) {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), timeout);
+    // 第一次使用主地址，重试使用备用地址
+    const isRetry = attempts > 0;
+    const testUrl = isRetry ? backupUrl : primaryUrl;
+    const testHost = isRetry ? backupHost : primaryHost;
     try {
       const start = performance.now();
-      const resp = await fetchWithRetry("https://speed.cloudflare.com/__down?bytes=500000", {
+      const resp = await fetchWithRetry(testUrl, {
         signal: controller.signal,
-        headers: { Host: "speed.cloudflare.com" },
+        headers: { Host: testHost },
         cf: { resolveOverride: formattedAddress } // Cloudflare 的解析覆盖
       }, 3, 200);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -1975,7 +1985,7 @@ async function cleanupOldIPs(env) {
   let cursor = null;
   const now = Date.now();
   // 配置区 —— 建议这样最安全
-  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;     // 最多保留 2 天
+  const MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;   // 最多保留 2 天
   const MIN_KEEP_COUNT = 12;                      // 强制保留最新 12 条
   const MAX_TOTAL_SIZE = 1 * 1024 * 1024;         // 总大小不超过 1MB（留足余量）
   const items = [];
@@ -3606,7 +3616,7 @@ async function serveHTML(env, request) {
                     resultHtml += '<div style="font-size: 0.9rem; color: var(--text-secondary);">';
                     resultHtml += '<div>📅 历史键: <code style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; color: var(--text-primary);">' + escapeHtml(data.historyKey || '—') + '</code></div>';
                     resultHtml += '<div>🕐 时间: ' + new Date(data.timestamp).toLocaleString() + '</div>';
-resultHtml += '</div>';
+					resultHtml += '</div>';
                     resultHtml += '</div>';
                     result.className = 'result success';
                     result.innerHTML = resultHtml;
@@ -3991,16 +4001,23 @@ async function handleSpeedTest(req, env) {
   if (parsed.type === 'ipv6' && !decodedAddress.startsWith('[')) {
     formattedAddress = `[${parsed.address}]:${parsed.port}`;
   }
-  // 测速请求，使用 fetchWithRetry 封装，3 次尝试，逐步退避
+  // 定义主备测速地址
+  const primaryUrl = "https://speed.cloudflare.com/__down?bytes=500000";
+  const backupUrl = "https://speedtest.sll.cloudns.org/500000";
+  const primaryHost = "speed.cloudflare.com";
+  const backupHost = "speedtest.sll.cloudns.org";
+  // 测速请求，先尝试主地址，失败后使用备用地址
   let latency = null;
   let latencySuccess = false;
+  let usedBackup = false;
+  // 第一次尝试：主地址
   try {
     const start = performance.now();
     const resp = await fetchWithRetry(
-      "https://speed.cloudflare.com/__down?bytes=500000",
+      primaryUrl,
       {
         method: "GET",
-        headers: { Host: "speed.cloudflare.com" },
+        headers: { Host: primaryHost },
         cf: { resolveOverride: formattedAddress }
       },
       3,
@@ -4010,13 +4027,35 @@ async function handleSpeedTest(req, env) {
       await resp.arrayBuffer();
       latency = Math.round(performance.now() - start);
       latencySuccess = true;
-    } else {
+    }
+  } catch (err) {
+    // 主地址失败，标记为需要尝试备用地址
+    latencySuccess = false;
+  }
+  // 如果主地址失败，使用备用地址重试
+  if (!latencySuccess) {
+    try {
+      usedBackup = true;
+      const start = performance.now();
+      const resp = await fetchWithRetry(
+        backupUrl,
+        {
+          method: "GET",
+          headers: { Host: backupHost },
+          cf: { resolveOverride: formattedAddress }
+        },
+        3,
+        200
+      );
+      if (resp && resp.ok) {
+        await resp.arrayBuffer();
+        latency = Math.round(performance.now() - start);
+        latencySuccess = true;
+      }
+    } catch (err) {
       latency = null;
       latencySuccess = false;
     }
-  } catch (err) {
-    latency = null;
-    latencySuccess = false;
   }
   // 位置信息获取
   let location = "未知";
