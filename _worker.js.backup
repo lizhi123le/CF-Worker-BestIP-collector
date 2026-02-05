@@ -96,7 +96,7 @@ const MAX_WAVES = 3; // 优化：每波次处理3个批次，平衡并发与稳�
     switch (addressType) {
       case 'ipv4': return 22;  // 从29降至22，减少并发压力
       case 'ipv6': return 18;    // IPv6 每批只处理18个地址
-      case 'domain': return 5;   // 每批5个地址
+      case 'domain': return 12;   // 每批12个地址
       default: return 5;         // 每批5个地址
     }
   }
@@ -126,7 +126,7 @@ function initializeSuccessStats() {
             successfulAddresses: 0,
             totalBatches: 0,
             successfulBatches: 0,
-            avgBatchSize: 5,
+            avgBatchSize: 12,
             lastUpdated: new Date().toISOString(),
             recentSuccess: []
         }
@@ -1648,7 +1648,7 @@ async function getLocationsForAddresses(addresses, env) {
     switch (addressType) {
       case 'ipv4': return 22;
       case 'ipv6': return 18;  // 修复：改为18，因为现在使用ip-api.com batch API
-      case 'domain': return 5;
+      case 'domain': return 12;
       default: return 5;
     }
   }
@@ -1962,8 +1962,8 @@ async function getLocationsForAddresses(addresses, env) {
     console.log(`开始处理 ${domainAddresses.length} 个域名地址`);
     const domainBatchFn = async (batchDomains) => {
       const batchIndices = domainIndices.slice(domainAddresses.indexOf(batchDomains[0]), domainAddresses.indexOf(batchDomains[0]) + batchDomains.length);
-      // 并行处理域名（每批3-5个，使用Promise.all）
-      const CONCURRENCY = 4; // 同时处理4个域名
+      // 并行处理域名（每批12个，使用Promise.all）
+      const CONCURRENCY = 12; // 同时处理12个域名
       const processDomain = async (domain, idx, index) => {
         let success = false;
         let location = null;
@@ -4160,9 +4160,9 @@ async function handleSpeedTest(req, env) {
   }
   // 定义主备测速地址
   const primaryUrl = "https://speed.cloudflare.com/__down?bytes=50000";
-  const backupUrl = "https://cachefly.cachefly.net/1mb.test";
+  const backupUrl = "https://speed.cloudflare.com/__down?bytes=50000";
   const primaryHost = "speed.cloudflare.com";
-  const backupHost = "cachefly.cachefly.net";
+  const backupHost = "speed.cloudflare.com";
   // 测速请求，先尝试主地址，失败后使用备用地址
   let latency = null;
   let latencySuccess = false;
@@ -4225,13 +4225,12 @@ async function handleSpeedTest(req, env) {
         if (data?.countryCode) location = data.countryCode;
       }
     } else if (parsed.type === 'ipv6') {
-      // IPv6：ipinfo
-      // 在 API 调用前规范化 IPv6 地址
-      const normalizedIp = normalizeIPv6Address(parsed.address);
-      const r = await fetchWithRetry(`https://ipinfo.io/${normalizedIp}/json`, {}, 2, 1000);
+      // IPv6：ip-api（需要去除方括号）
+      const normalizedIp = parsed.address.replace(/^\[|\]$/g, '');
+      const r = await fetchWithRetry(`http://ip-api.com/json/${normalizedIp}?fields=countryCode`, {}, 2, 1000);
       if (r.ok) {
         const data = await r.json();
-        if (data?.country) location = data.country + "_IPv6";
+        if (data?.countryCode) location = data.countryCode + "_IPv6";
       }
     } else if (parsed.type === 'domain') {
       // 域名：DoH 解析 -> IPv4，再用 ipapi 获取国家/地区
