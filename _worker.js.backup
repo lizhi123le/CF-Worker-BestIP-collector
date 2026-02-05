@@ -2825,17 +2825,13 @@ async function serveHTML(env, request) {
     <div class="container">
         <div class="header">
             <div class="header-content">
-                <h1 style="display:inline-block; animation: breathe 4s ease-in-out infinite;">
-                    <span style="display:inline-block; animation: pulse 4s ease-in-out infinite;">🌐</span> Cloudflare IP/域名 收集器
+                <h1 style="display:inline-block; animation: breathe 5s ease-in-out infinite;">
+                  <span style="display:inline-block; animation: pulse 5s ease-in-out infinite;">🌐</span> Cloudflare IP/域名 收集器
                 </h1>
                 <style>
                 @keyframes breathe {
                     0%,100% { opacity: 0.7; }
                     50%     { opacity: 1; }
-                }
-                @keyframes pulse {
-                    0%,100% { transform: scale(1); }
-                    50%     { transform: scale(1.18); }
                 }
                 </style>
                 <p>网络加速专家 | 智能测速与优化</p>
