@@ -4111,6 +4111,13 @@ async function handleRawIPs(env) {
   const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
   const customPath = await getCustomPath(env);
   const display = await getIPsWithFallback(env, limit);
+  
+  // 获取全局唯一 IP 计数 (具有独立键)
+  let totalUnique = await env.IP_STORAGE.get("global_unique_ips_count");
+  if (!totalUnique) {
+    totalUnique = display.totalUniqueIPs;
+  }
+  
   const result = {
     ...latest,
     limit,
