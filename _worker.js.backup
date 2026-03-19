@@ -408,6 +408,43 @@ function isValidIPv4(ip) {
     return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
   });
 }
+/**
+ * 统一的地址解析函数 (Server-side)
+ * 处理 IPv4, IPv6 (含方括号), 域名及其端口
+ */
+function parseAddressWithPort(address) {
+  if (!address || typeof address !== 'string') return { address: '', port: 443, type: 'unknown' };
+  let pure = address.trim();
+  
+  // 处理带方括号的 IPv6
+  if (pure.startsWith('[') && pure.includes(']')) {
+    const bracketEnd = pure.lastIndexOf(']');
+    const addr = pure.slice(1, bracketEnd);
+    const afterBracket = pure.slice(bracketEnd + 1);
+    const portMatch = afterBracket.match(/^:(\d+)$/);
+    const port = portMatch ? parseInt(portMatch[1]) : 443;
+    return { address: addr, port, type: 'ipv6' };
+  }
+  
+  // 检测不带方括号的 IPv6 (多于一个冒号且不含点)
+  if ((pure.match(/:/g) || []).length > 1 && !pure.includes('.')) {
+    return { address: pure, port: 443, type: 'ipv6' };
+  }
+
+  // IPv4 或 域名 (可能带端口)
+  if (pure.includes(':')) {
+    const parts = pure.split(':');
+    const portStr = parts.pop();
+    const addr = parts.join(':');
+    const port = parseInt(portStr);
+    const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(addr) ? 'ipv4' : 'domain';
+    return { address: addr, port: isNaN(port) ? 443 : port, type };
+  }
+
+  // 纯地址
+  const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(pure) ? 'ipv4' : 'domain';
+  return { address: pure, port: 443, type };
+}
 // 域名验证
 function isValidDomain(domain) {
   if (!domain || typeof domain !== 'string') return false;
@@ -490,52 +527,12 @@ function isValidAddressWithPort(address) {
   // 其他情况
   return false;
 }
-// 解析地址和端口
-function parseAddressWithPort(address) {
-  if (!address) {
-    return { address: '', port: "443", type: 'unknown' };
-  }
-  // 优先检查IPv6带方括号的情况
-  if (address.startsWith('[') && address.includes(']:')) {
-    const ipv6End = address.indexOf(']');
-    const ipv6 = address.substring(1, ipv6End);
-    const port = address.substring(ipv6End + 2);
-    return isValidIPv6(ipv6) ? 
-      { address: ipv6, port: port || "443", type: 'ipv6' } :
-      { address: address, port: "443", type: 'unknown' };
-  }
-  // 检查IPv6不带方括号（但包含多个冒号）
-  const parts = address.split(':');
-  if (parts.length > 2 && !address.includes('.')) {
-    return isValidIPv6(address) ? 
-      { address: address, port: "443", type: 'ipv6' } :
-      { address: address, port: "443", type: 'unknown' };
-  }
-  // 处理域名:端口 或 IPv4:端口
-  if (parts.length === 2) {
-    const addrPart = parts[0];
-    const portPart = parts[1];
-    if (isValidIPv4(addrPart)) {
-      return { address: addrPart, port: portPart || "443", type: 'ipv4' };
-    }
-    if (isValidDomain(addrPart)) {
-      return { address: addrPart, port: portPart || "443", type: 'domain' };
-    }
-  }
-  // 处理纯地址（无端口）
-  if (isValidIPv4(address)) {
-    return { address: address, port: "443", type: 'ipv4' };
-  }
-  if (isValidDomain(address)) {
-    return { address: address, port: "443", type: 'domain' };
-  }
-  return { address: address, port: "443", type: 'unknown' };
-}
+
 // 格式化地址输出
 function formatAddressOutput(address, location, latency) {
   if (!address) return '';
   const parsed = parseAddressWithPort(address);
-  const portPart = parsed.port !== "443" ? `:${parsed.port}` : "";
+  const portPart = parsed.port && parsed.port !== 443 ? `:${parsed.port}` : "";
   const latencyPart = latency ? `_${Math.round(latency)}ms` : "";
   let displayLocation = location || "未知";  // 默认
   if (parsed.type !== 'domain' && (displayLocation === "未知" || displayLocation.toLowerCase() === 'ipv4' || displayLocation.toLowerCase() === 'ipv6')) {
@@ -1774,42 +1771,9 @@ async function getLocationsForAddresses(addresses, env) {
     return results;
   }
   // 地址解析函数
-  function parseAddressWithPort(address) {
-    if (!address) return { type: 'unknown', address: '', port: null };
-    // IPv6 地址处理
-    if (address.includes(':') && address.includes('[') && address.includes(']')) {
-      const match = address.match(/^\[([0-9a-fA-F:]+)\]:(\d+)$/);
-      if (match) {
-        return { type: 'ipv6', address: match[1], port: parseInt(match[2]) };
-      }
-    }
-    // 简单 IPv6 地址（无端口）
-    if (address.includes(':') && address.split(':').length >= 3) {
-      return { type: 'ipv6', address: address, port: null };
-    }
-    // IPv4 或域名（带端口）
-    if (address.includes(':')) {
-      const parts = address.split(':');
-      if (parts.length === 2) {
-        const host = parts[0];
-        const port = parseInt(parts[1]);
-        if (!isNaN(port) && port > 0 && port <= 65535) {
-          // 判断是 IPv4 还是域名
-          if (host.split('.').length === 4 && host.split('.').every(part => !isNaN(part))) {
-            return { type: 'ipv4', address: host, port };
-          } else {
-            return { type: 'domain', address: host, port };
-          }
-        }
-      }
-    }
-    // IPv4 地址（无端口）
-    if (address.split('.').length === 4 && address.split('.').every(part => !isNaN(part))) {
-      return { type: 'ipv4', address: address, port: null };
-    }
-    // 域名（无端口）
-    return { type: 'domain', address: address, port: null };
-  }
+  // NOTE: This function is now defined globally at the top of the file.
+  // function parseAddressWithPort(address) { ... }
+
   // 带重试的 fetch 函数
   async function fetchWithRetry(url, options = {}, maxRetries = 2, timeout = 2000) {
     for (let i = 0; i < maxRetries; i++) {
@@ -2144,7 +2108,10 @@ async function cleanupOldIPs(env) {
   }
   // 第二步：真正读取每个 value 的字节长度（这是唯一可靠的方法）
   const details = [];
+  const MAX_CLEANUP_CHECK = 50; // 优化：限制检查数量以防止 CPU 超时
+  let checkedCount = 0;
   for (const key of items) {
+    if (checkedCount >= MAX_CLEANUP_CHECK) break;
     try {
       const value = await env.IP_STORAGE.get(key.name, { type: "text" });
       if (value === null) continue;
@@ -2152,6 +2119,7 @@ async function cleanupOldIPs(env) {
       const date = parseTimestampKey(key.name);
       if (date) {
         details.push({ name: key.name, date, size });
+        checkedCount++;
       }
     } catch (e) {
       console.warn(`读取 ${key.name} 失败，跳过:`, e);
@@ -2300,42 +2268,9 @@ async function batchGetKV(env, keys) {
   return values.map((value, idx) => ({ key: keys[idx], value }));
 }
 async function getAllUniqueIPCount(env) {
-  const blacklistRaw = await getBlacklist(env);
-  const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
-  const allIPs = new Set();
-  const LIST_LIMIT = 300; // 从522降至300，进一步减少单次KV操作负载
-  let cursor = null;
-  const allKeys = [];
-  // 分页收集所有键
-  do {
-    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT, cursor });
-    list.keys.forEach(key => allKeys.push(key));
-    cursor = list.cursor;
-  } while (cursor);
-  // 批量获取值（分批以避免内存峰值）
-  const BATCH_SIZE = 39; // 从52降至39，减少内存峰值
-  for (let i = 0; i < allKeys.length; i += BATCH_SIZE) {
-    const batchKeys = allKeys.slice(i, i + BATCH_SIZE);
-    const batchResults = await batchGetKV(env, batchKeys);
-    batchResults.forEach(({ key, value }) => {
-      if (!value) return;
-      try {
-        const data = JSON.parse(value);
-        if (data && data.ips && Array.isArray(data.ips)) {
-          data.ips.forEach(item => {
-            if (item && item.address && !isBlacklisted(item.address, blacklistPreprocessed)) {
-              allIPs.add(item.address);
-            }
-          });
-        }
-      } catch (e) {
-        console.warn(`Skip bad history ${key.name}:`, e);
-      }
-    });
-    // 小延迟避免CPU峰值
-    if (i + BATCH_SIZE < allKeys.length) await new Promise(r => setTimeout(r, Math.floor(Math.random() * 11) + 20));
-  }
-  return allIPs.size;
+  // 优化：增加 limit 限制，避免大数据量下 CPU 超时
+  const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: 1000 });
+  return list.keys.length;
 }
 async function getIPsWithFallback(env, limit = null) {
   const blacklistRaw = await getBlacklist(env);
@@ -2921,7 +2856,7 @@ async function serveHTML(env, request) {
 				  if (parsed.type === 'ipv6') {
 					displayAddress = '[' + displayAddress + ']'; 
 				  }
-				  if (parsed.port !== "443") {
+				  if (parsed.port !== 443) { // Bug fix: Changed "443" to 443 (number)
 					displayAddress += ':' + parsed.port;
 				  }
                   // 安全转义所有用户数据
@@ -3041,7 +2976,6 @@ async function serveHTML(env, request) {
                 if (savedTheme) {
                     this.currentTheme = savedTheme;
                 } else {
-                    // 如果没有保存的主题，使用系统偏好
                     this.currentTheme = systemPrefersDark ? 'dark' : 'light';
                 }
                 this.applyTheme(this.currentTheme);
@@ -3274,54 +3208,29 @@ async function serveHTML(env, request) {
         }
         // 解析地址类型
         function parseAddressWithPort(address) {
-          const pure = address.split('#')[0].trim();
-          const isIPv4Lite = v => {
-            const octets = v.split('.');
-            if (octets.length !== 4) return false;
-            return octets.every(oct => {
-              const num = Number(oct);
-              return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
-            });
-          };
-          const isIPv6Lite = v => v.includes(':');
-          let addrPart, portPart = "443";
-          // [IPv6]:port
-          if (pure.startsWith('[') && pure.includes(']:')) {
-            const end = pure.indexOf(']');
-            addrPart = pure.substring(1, end);
-            portPart = pure.substring(end + 2) || "443";
-            return { address: addrPart, port: portPart, type: 'ipv6' };
-          }
-          // [IPv6]
-          if (pure.startsWith('[') && pure.endsWith(']')) {
-            addrPart = pure.slice(1, -1);
-            return { address: addrPart, port: "443", type: 'ipv6' };
-          }
-          const parts = pure.split(':');
-          // IPv6 无括号
-          if (parts.length > 2 && !pure.includes('[')) {
-            return { address: pure, port: "443", type: 'ipv6' };
-          }
-          // 无端口
-          if (parts.length === 1) {
-            addrPart = parts[0];
-            let type;
-            if (isIPv4Lite(addrPart)) type = 'ipv4';
-            else if (isIPv6Lite(addrPart)) type = 'ipv6';
-            else type = 'domain';
-            return { address: addrPart, port: "443", type };
-          }
-          // addr:port
-          if (parts.length === 2) {
-            addrPart = parts[0];
-            portPart = parts[1] || "443";
-            let type;
-            if (isIPv4Lite(addrPart)) type = 'ipv4';
-            else if (isIPv6Lite(addrPart)) type = 'ipv6';
-            else type = 'domain';
-            return { address: addrPart, port: portPart, type };
-          }
-          return { address: pure, port: "443", type: 'unknown' };
+            if (!address || typeof address !== 'string') return { address: '', port: 443, type: 'unknown' };
+            let pure = address.split('#')[0].trim();
+            if (pure.startsWith('[') && pure.includes(']')) {
+                const bracketEnd = pure.lastIndexOf(']');
+                const addr = pure.slice(1, bracketEnd);
+                const afterBracket = pure.slice(bracketEnd + 1);
+                const portMatch = afterBracket.match(/^:(\d+)$/);
+                const port = portMatch ? parseInt(portMatch[1]) : 443;
+                return { address: addr, port, type: 'ipv6' };
+            }
+            if ((pure.match(/:/g) || []).length > 1 && !pure.includes('.')) {
+                return { address: pure, port: 443, type: 'ipv6' };
+            }
+            if (pure.includes(':')) {
+                const parts = pure.split(':');
+                const portStr = parts.pop();
+                const addr = parts.join(':');
+                const port = parseInt(portStr);
+                const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(addr) ? 'ipv4' : 'domain';
+                return { address: addr, port: isNaN(port) ? 443 : port, type };
+            }
+            const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(pure) ? 'ipv4' : 'domain';
+            return { address: pure, port: 443, type };
         }
         // 格式化地址输出
         function formatAddressOutput(address, location, latency) {
@@ -4150,7 +4059,12 @@ async function handleSpeedTest(req, env) {
   const url = new URL(req.url);
   const address = url.searchParams.get("ip");
   if (!address) return jsonResponse({ error: "missing ip" }, 400);
-  const decodedAddress = decodeURIComponent(address);
+  let decodedAddress;
+  try {
+    decodedAddress = decodeURIComponent(address);
+  } catch (e) {
+    return jsonResponse({ error: "invalid ip encoding" }, 400);
+  }
   const parsed = parseAddressWithPort(decodedAddress);
   // 形成 Cloudflare Resolver 的覆盖地址
   // IPv6 需要方括号包裹
@@ -4178,7 +4092,7 @@ async function handleSpeedTest(req, env) {
         cf: { resolveOverride: formattedAddress }
       },
       3,
-      200
+      1500
     );
     if (resp && resp.ok) {
       await resp.arrayBuffer();
@@ -4202,7 +4116,7 @@ async function handleSpeedTest(req, env) {
           cf: { resolveOverride: formattedAddress }
         },
         3,
-        200
+        1500
       );
       if (resp && resp.ok) {
         await resp.arrayBuffer();
