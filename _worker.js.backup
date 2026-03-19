@@ -3298,7 +3298,7 @@ async function serveHTML(env, request) {
         function formatAddressOutput(address, location, latency) {
           if (!address) return '';
           const parsed = parseAddressWithPort(address);
-          const portPart = parsed.port !== "443" ? ':' + parsed.port : "";
+          const portPart = parsed.port !== 443 ? ':' + parsed.port : "";
           const latencyPart = latency ? Math.round(latency) + 'ms' : "";
           let displayLocation = location || "未知";
           if (parsed.type !== 'domain' && (displayLocation === "未知" || displayLocation.toLowerCase() === 'ipv4' || displayLocation.toLowerCase() === 'ipv6')) {
@@ -3461,8 +3461,11 @@ async function serveHTML(env, request) {
                         displayLocation = parsed.address;
                       }
                     }
-                    const baseText = addressElement.textContent.split('#')[0] + '#' + displayLocation;
-                    addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
+                    let displayAddress = parsed.address;
+                    if (parsed.type === 'ipv6') displayAddress = '[' + displayAddress + ']';
+                    if (parsed.port !== 443) displayAddress += ':' + parsed.port;
+                    const baseText = displayAddress + '#' + displayLocation;
+                    addressElement.innerHTML = escapeHtml(baseText) + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
                     showMessage('地址 ' + address + ' 测速完成: ' + rounded + 'ms');
                 } else {
                     speedElement.textContent = '失败';
@@ -3555,8 +3558,11 @@ async function serveHTML(env, request) {
                                 displayLocation = parsed.address;
                               }
                             }
-                            const baseText = addressElement.textContent.split('#')[0] + '#' + displayLocation;
-                            addressElement.innerHTML = baseText + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
+                            let displayAddress = parsed.address;
+                            if (parsed.type === 'ipv6') displayAddress = '[' + displayAddress + ']';
+                            if (parsed.port !== 443) displayAddress += ':' + parsed.port;
+                            const baseText = displayAddress + '#' + displayLocation;
+                            addressElement.innerHTML = escapeHtml(baseText) + (rounded ? '_' + rounded + 'ms' : '') + typeBadge;
                         }
                         speedResults[address] = { latency: rounded, success: true };
                     } else {
@@ -3921,7 +3927,7 @@ async function serveHTML(env, request) {
     						if (parsed.type === 'ipv6') {
     							displayAddress = '[' + displayAddress + ']'; 
     						}
-    						if (parsed.port !== "443") {
+    						if (parsed.port !== 443) {
     							displayAddress += ':' + parsed.port;
     						}
                             // 安全转义所有数据
