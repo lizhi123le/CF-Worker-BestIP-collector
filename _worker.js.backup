@@ -2267,11 +2267,7 @@ async function batchGetKV(env, keys) {
   const values = await Promise.all(promises);
   return values.map((value, idx) => ({ key: keys[idx], value }));
 }
-async function getAllUniqueIPCount(env) {
-  // 优化：增加 limit 限制，避免大数据量下 CPU 超时
-  const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: 1000 });
-  return list.keys.length;
-}
+
 async function getIPsWithFallback(env, limit = null) {
   const blacklistRaw = await getBlacklist(env);
   const blacklistPreprocessed = preprocessBlacklist(blacklistRaw);
@@ -2354,6 +2350,7 @@ async function getIPsWithFallback(env, limit = null) {
     lastUpdated: latest.lastUpdated || new Date().toISOString(),
     sources: latest.sources || [],
     originalCount: latestCount, // 最新批次原始数量（用于前台显示）
+    totalUniqueIPs: addressSet.size, // 全局唯一地址总数
     blacklist: blacklistRaw
   };
 }
@@ -2434,7 +2431,6 @@ async function simpleHash(str) {
 async function serveHTML(env, request) {
   const adminStatus = await getAdminStatus(env, request);
   const latest = await getStoredIPsLatest(env);
-  const totalUnique = await getAllUniqueIPCount(env);
   const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
   const customPath = await getCustomPath(env);
   const displayData = await getIPsWithFallback(env, limit);
@@ -2450,7 +2446,7 @@ async function serveHTML(env, request) {
     customPath,
     sources_urls: await getSources(env),
     blacklist: displayData.blacklist,
-    totalUniqueIPs: totalUnique,
+    totalUniqueIPs: displayData.totalUniqueIPs, // 使用准确的唯一地址总数
     ips: displayData.ips,
     count: displayData.count,
     originalCount: displayData.originalCount || 0,
@@ -4004,6 +4000,7 @@ function normalizeIPv6Address(ip) {
 async function handleGetIPs(env, attachment = false) {
   const limit = parseInt(await env.IP_STORAGE.get("ip_limit")) || null;
   const data = await getIPsWithFallback(env, limit);
+  console.log(`handleGetIPs: totalUnique=${data.totalUniqueIPs}, currentBatch=${data.ips?.length}`);
   if (!data.ips || data.ips.length === 0) {
     return new Response("", {
       headers: {
@@ -4043,7 +4040,7 @@ async function handleRawIPs(env) {
     customPath,
     sources_urls: await getSources(env),
     blacklist: display.blacklist,
-    totalUniqueIPs: await getAllUniqueIPCount(env),
+    totalUniqueIPs: display.totalUniqueIPs, // 使用准确的唯一地址总数
     ips: display.ips.sort((a, b) => {
       if (a.latency && b.latency) return a.latency - b.latency;
       if (a.latency) return -1;
