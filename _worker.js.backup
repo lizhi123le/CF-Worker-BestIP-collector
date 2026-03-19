@@ -386,6 +386,10 @@ function isValidIPv6(ip) {
     const cleanIP = ip.replace(/^\[|\]$/g, '');
     // 基本格式检查
     if (!/^[\da-fA-F:]+$/.test(cleanIP)) return false;
+
+    // 过滤掉以 :: 开头的地址（通常是环回或不完整的地址）
+    if (cleanIP.startsWith('::')) return false;
+
     // 使用URL API进行验证
     const testUrl = `http://[${cleanIP}]`;
     new URL(testUrl);
