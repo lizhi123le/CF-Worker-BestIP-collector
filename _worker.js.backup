@@ -414,7 +414,8 @@ function isValidIPv4(ip) {
  */
 function parseAddressWithPort(address) {
   if (!address || typeof address !== 'string') return { address: '', port: 443, type: 'unknown' };
-  let pure = address.trim();
+  // 关键：先剥离可能存在的 # 备注或后缀，再进行解析
+  let pure = address.split('#')[0].trim();
   
   // 处理带方括号的 IPv6
   if (pure.startsWith('[') && pure.includes(']')) {
@@ -422,7 +423,7 @@ function parseAddressWithPort(address) {
     const addr = pure.slice(1, bracketEnd);
     const afterBracket = pure.slice(bracketEnd + 1);
     const portMatch = afterBracket.match(/^:(\d+)$/);
-    const port = portMatch ? parseInt(portMatch[1]) : 443;
+    const port = portMatch ? parseInt(portMatch[1], 10) : 443;
     return { address: addr, port, type: 'ipv6' };
   }
   
@@ -436,13 +437,13 @@ function parseAddressWithPort(address) {
     const parts = pure.split(':');
     const portStr = parts.pop();
     const addr = parts.join(':');
-    const port = parseInt(portStr);
-    const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(addr) ? 'ipv4' : 'domain';
+    const port = parseInt(portStr, 10);
+    const type = isValidIPv4(addr) ? 'ipv4' : 'domain';
     return { address: addr, port: isNaN(port) ? 443 : port, type };
   }
 
   // 纯地址
-  const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(pure) ? 'ipv4' : 'domain';
+  const type = isValidIPv4(pure) ? 'ipv4' : 'domain';
   return { address: pure, port: 443, type };
 }
 // 域名验证
@@ -3203,15 +3204,26 @@ async function serveHTML(env, request) {
             }
         }
         // 解析地址类型
+        function isValidIPv4(ip) {
+            if (!ip || typeof ip !== 'string') return false;
+            const octets = ip.split('.');
+            if (octets.length !== 4) return false;
+            return octets.every(oct => {
+                const num = parseInt(oct, 10);
+                return !isNaN(num) && num >= 0 && num <= 255 && String(num) === oct;
+            });
+        }
+        // 解析地址类型
         function parseAddressWithPort(address) {
             if (!address || typeof address !== 'string') return { address: '', port: 443, type: 'unknown' };
+            // 关键：先剥离可能存在的 # 备注或后缀，再进行解析
             let pure = address.split('#')[0].trim();
             if (pure.startsWith('[') && pure.includes(']')) {
                 const bracketEnd = pure.lastIndexOf(']');
                 const addr = pure.slice(1, bracketEnd);
                 const afterBracket = pure.slice(bracketEnd + 1);
                 const portMatch = afterBracket.match(/^:(\d+)$/);
-                const port = portMatch ? parseInt(portMatch[1]) : 443;
+                const port = portMatch ? parseInt(portMatch[1], 10) : 443;
                 return { address: addr, port, type: 'ipv6' };
             }
             if ((pure.match(/:/g) || []).length > 1 && !pure.includes('.')) {
@@ -3221,11 +3233,11 @@ async function serveHTML(env, request) {
                 const parts = pure.split(':');
                 const portStr = parts.pop();
                 const addr = parts.join(':');
-                const port = parseInt(portStr);
-                const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(addr) ? 'ipv4' : 'domain';
+                const port = parseInt(portStr, 10);
+                const type = isValidIPv4(addr) ? 'ipv4' : 'domain';
                 return { address: addr, port: isNaN(port) ? 443 : port, type };
             }
-            const type = /^(\d{1,3}\.){3}\d{1,3}$/.test(pure) ? 'ipv4' : 'domain';
+            const type = isValidIPv4(pure) ? 'ipv4' : 'domain';
             return { address: pure, port: 443, type };
         }
         // 格式化地址输出
