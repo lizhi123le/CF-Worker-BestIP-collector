@@ -1437,10 +1437,7 @@ async function handleUpdate(env) {
   await env.IP_STORAGE.put(timestampKey, JSON.stringify(finalData));
   console.log(`Saved timestamped ${timestampKey}`);
   
-  // 增量更新全局唯一IP统计
-  await updateGlobalUniqueIPs(env, uniqueAddressesList);
-
-  // 清理旧的历史记录
+  // 清理旧的历史记录，并触发全局计数刷新
   await cleanupOldIPs(env);
   // 兼容性存储
   await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(finalData));
@@ -2159,53 +2156,49 @@ async function cleanupOldIPs(env) {
   } else {
     console.log("[清理] 当前正常，无需删除");
   }
+  // 无论是否删除了记录，都刷新一次全局唯一 IP 计数（确保与存储完全同步）
+  await refreshGlobalIPCount(env);
 }
 
 /**
- * 增量更新全局唯一 IP 集合及计数
+ * 刷新全局唯一 IP 计数
+ * 扫描所有“cloudflare_ips_”前缀的历史记录，构建当前存量的唯一地址总数
  * @param {object} env 环境变量
- * @param {string[]} newIPs 本次发现的新 IP 列表
  */
-async function updateGlobalUniqueIPs(env, newIPs) {
-  if (!newIPs || newIPs.length === 0) return;
-  
+async function refreshGlobalIPCount(env) {
   try {
-    // 1. 获取现有全局集合
-    const rawSet = await env.IP_STORAGE.get("global_unique_ips_set");
-    let globalList = rawSet ? JSON.parse(rawSet) : [];
+    const LIST_LIMIT = 1000;
+    const list = await env.IP_STORAGE.list({ prefix: "cloudflare_ips_", limit: LIST_LIMIT });
+    if (!list.keys || list.keys.length === 0) {
+      await env.IP_STORAGE.put("global_unique_ips_count", "0");
+      return;
+    }
+
+    // 批量读取所有 key 包含的数据
+    const historicalResults = await batchGetKV(env, list.keys);
+    const addressSet = new Set();
     
-    // 2. 合并新 IP (去重)
-    const set = new Set(globalList);
-    let addedCount = 0;
-    for (const ip of newIPs) {
-      if (ip && !set.has(ip)) {
-        set.add(ip);
-        addedCount++;
+    for (const item of historicalResults) {
+      if (!item.value) continue;
+      try {
+        const data = JSON.parse(item.value);
+        if (data && data.ips && Array.isArray(data.ips)) {
+          data.ips.forEach(i => {
+            if (i && i.address) addressSet.add(i.address);
+          });
+        }
+      } catch (e) {
+        console.warn(`Refresh count: Failed to parse ${item.key.name}`);
       }
     }
     
-    if (addedCount > 0) {
-      const updatedList = Array.from(set);
-      // 限制集合大小以防 KV 键值过大 (5万个 IP 约 1MB)
-      if (updatedList.length > 50000) {
-        updatedList.splice(0, updatedList.length - 50000);
-      }
-      
-      // 3. 保存集合和计数
-      await Promise.all([
-        env.IP_STORAGE.put("global_unique_ips_set", JSON.stringify(updatedList)),
-        env.IP_STORAGE.put("global_unique_ips_count", set.size.toString())
-      ]);
-      console.log(`Global IP count updated: ${set.size} (added ${addedCount})`);
-    } else {
-      // 即使没增加新IP，也确保 count 存在
-      const count = await env.IP_STORAGE.get("global_unique_ips_count");
-      if (!count) {
-        await env.IP_STORAGE.put("global_unique_ips_count", set.size.toString());
-      }
-    }
+    // 保存最终计数值
+    await env.IP_STORAGE.put("global_unique_ips_count", addressSet.size.toString());
+    // 移除旧的增量记录键（如果存在），节省空间
+    await env.IP_STORAGE.delete("global_unique_ips_set");
+    console.log(`Global unique IP count refreshed: ${addressSet.size}`);
   } catch (e) {
-    console.error("Update global IPs error:", e);
+    console.error("Refresh global IP count error:", e);
   }
 }
 /* ====================== 来源管理 ====================== */
