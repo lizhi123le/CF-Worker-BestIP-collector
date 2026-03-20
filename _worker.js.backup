@@ -3089,8 +3089,7 @@ async function serveHTML(env, request) {
                     'system': '💻'
                 };
                 
-                // 如果是 system 模式，始终显示电脑图标标识模式，或者根据实际显示图标？
-                // 用户要求“风格一致”，通常 System 模式显示电脑图标。
+                // 用户要求“风格一致”，System 模式显示电脑图标。
                 iconContainer.textContent = mode === 'system' ? icons['system'] : icons[actualTheme];
             },
             showThemeNotification(mode) {
