@@ -2798,7 +2798,7 @@ async function serveHTML(env, request) {
         .modal h3 { margin-bottom: 16px; color: var(--text-heading); transition: color 0.3s ease; }
         .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
         /* 主题切换按钮样式 */
-        .theme-toggle { cursor: pointer; border: none; background: var(--social-link-bg); }
+        .theme-toggle { cursor: pointer; background: var(--social-link-bg); }
         .theme-toggle:hover { background: var(--bg-hover); }
         .theme-toggle #theme-icon { font-size: 1.2rem; display: block; }
         /* 主题下拉菜单样式 */
@@ -3083,14 +3083,15 @@ async function serveHTML(env, request) {
                 const iconContainer = document.getElementById('theme-icon');
                 if (!iconContainer) return;
                 
-                const svgs = {
-                    'light': '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>',
-                    'dark': '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>',
-                    'system': '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>'
+                const icons = {
+                    'light': '☀️',
+                    'dark': '🌙',
+                    'system': '💻'
                 };
                 
-                // 如果是 system 模式，显示电脑图标
-                iconContainer.innerHTML = mode === 'system' ? svgs['system'] : svgs[actualTheme];
+                // 如果是 system 模式，始终显示电脑图标标识模式，或者根据实际显示图标？
+                // 用户要求“风格一致”，通常 System 模式显示电脑图标。
+                iconContainer.textContent = mode === 'system' ? icons['system'] : icons[actualTheme];
             },
             showThemeNotification(mode) {
                 const messages = {
