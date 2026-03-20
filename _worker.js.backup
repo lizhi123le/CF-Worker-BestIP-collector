@@ -2541,18 +2541,14 @@ async function serveHTML(env, request) {
     <meta name="msapplication-TileImage" content="/favicon.png">
     <meta name="msapplication-TileColor" content="#3b82f6">
     <!-- 主题色 -->
-    <meta name="theme-color" content="#3b82f6">
+    <meta name="theme-color" content="#3b82f6" id="meta-theme-light" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f172a" id="meta-theme-dark" media="(prefers-color-scheme: dark)">
     <script>
         (function() {
             const savedTheme = localStorage.getItem('cf-ip-collector-theme');
-            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            let theme = 'light';
-            if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
-                theme = 'dark';
-            } else if (savedTheme === 'system') {
-                theme = systemPrefersDark ? 'dark' : 'light';
+            if (savedTheme === 'light' || savedTheme === 'dark') {
+                document.documentElement.setAttribute('data-theme', savedTheme);
             }
-            document.documentElement.setAttribute('data-theme', theme);
         })();
     </script>
     <style>
@@ -2609,7 +2605,7 @@ async function serveHTML(env, request) {
             --admin-dropdown-btn-bg: #ef4444;
         }
         [data-theme="dark"] {
-            /* 深色模式变量 */
+            /* 深色模式变量 (手动锁定) */
             --bg-primary: #0f172a;
             --bg-secondary: #1e293b;
             --bg-card: #1e293b;
@@ -2659,6 +2655,60 @@ async function serveHTML(env, request) {
             --admin-btn-bg: #2563eb;
             --admin-btn-text: #ffffff;
             --admin-dropdown-btn-bg: #dc2626;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                /* 深色模式变量 (跟随系统) */
+                --bg-primary: #0f172a;
+                --bg-secondary: #1e293b;
+                --bg-card: #1e293b;
+                --bg-hover: #334155;
+                --bg-stat: #0f172a;
+                --bg-ip-list: #0f172a;
+                --bg-source: #0f172a;
+                --bg-modal: #1e293b;
+                --bg-admin-modal: #1e293b;
+                --bg-admin-dropdown: #1e293b;
+                --bg-overlay: rgba(0,0,0,0.7);
+                --bg-content-overlay: rgba(0,0,0,0.3);
+                --text-primary: #e2e8f0;
+                --text-secondary: #94a3b8;
+                --text-heading: #60a5fa;
+                --text-heading-h2: #60a5fa;
+                --border-primary: #334155;
+                --border-secondary: #475569;
+                --border-input: #475569;
+                --input-bg: #334155;
+                --input-text: #ffffff;
+                --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+                --shadow-md: 0 4px 6px rgba(0,0,0,0.3);
+                --shadow-lg: 0 8px 16px rgba(0,0,0,0.4);
+                --shadow-button: 0 4px 8px rgba(0,0,0,0.3);
+                --btn-secondary-bg: #334155;
+                --btn-secondary-text: #e2e8f0;
+                --btn-secondary-border: #475569;
+                --btn-secondary-hover: #475569;
+                --spinner-bg: #334155;
+                --success-bg: rgba(16, 185, 129, 0.07);
+                --success-text: #17f2b4;
+                --success-border: #10b981;
+                --error-bg: rgba(239, 68, 68, 0.07);
+                --error-text: #fca5a5;
+                --error-border: #ef4444;
+                --speed-fast-bg: #064e3b;
+                --speed-fast-text: #6ee7b7;
+                --speed-medium-bg: #b16336;
+                --speed-medium-text: #fcd34d;
+                --speed-slow-bg: #991b1b;
+                --speed-slow-text: #ffcece;
+                --social-link-bg: #1e293b;
+                --youtube-hover: #450a0a;
+                --telegram-hover: #172554;
+                --progress-bg: #334155;
+                --admin-btn-bg: #2563eb;
+                --admin-btn-text: #ffffff;
+                --admin-dropdown-btn-bg: #dc2626;
+            }
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -3033,35 +3083,29 @@ async function serveHTML(env, request) {
         // ==================== 主题管理 ====================
         const ThemeManager = {
             STORAGE_KEY: 'cf-ip-collector-theme',
-            currentTheme: 'light', // 这里的 currentTheme 指的是模式：light, dark, system
+            currentTheme: 'system',
             init() {
                 const savedTheme = localStorage.getItem(this.STORAGE_KEY);
                 this.currentTheme = savedTheme || 'system';
-                
-                // 初步应用（如果 blocking script 没跑或者没跑对）
                 this.apply(this.currentTheme);
-                
-                // 监听系统主题变化
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-                    if (this.currentTheme === 'system') {
-                        this.apply('system');
-                    }
-                });
             },
             apply(mode) {
-                let actualTheme = mode;
+                const html = document.documentElement;
+                const metaLight = document.getElementById('meta-theme-light');
+                const metaDark = document.getElementById('meta-theme-dark');
+
                 if (mode === 'system') {
-                    actualTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                    html.removeAttribute('data-theme');
+                    if (metaLight) metaLight.setAttribute('content', '#3b82f6');
+                    if (metaDark) metaDark.setAttribute('content', '#0f172a');
+                } else {
+                    html.setAttribute('data-theme', mode);
+                    const color = mode === 'dark' ? '#0f172a' : '#3b82f6';
+                    if (metaLight) metaLight.setAttribute('content', color);
+                    if (metaDark) metaDark.setAttribute('content', color);
                 }
                 
-                document.documentElement.setAttribute('data-theme', actualTheme);
-                
-                // 更新 meta theme-color
-                const themeColor = actualTheme === 'dark' ? '#0f172a' : '#3b82f6';
-                const metaThemeColor = document.querySelector('meta[name="theme-color"]');
-                if (metaThemeColor) metaThemeColor.setAttribute('content', themeColor);
-                
-                this.updateThemeIcon(mode, actualTheme);
+                this.updateThemeIcon(mode);
             },
             toggle() {
                 const modes = ['light', 'dark', 'system'];
@@ -3079,7 +3123,7 @@ async function serveHTML(env, request) {
                 this.apply(nextMode);
                 this.showThemeNotification(nextMode);
             },
-            updateThemeIcon(mode, actualTheme) {
+            updateThemeIcon(mode) {
                 const iconContainer = document.getElementById('theme-icon');
                 if (!iconContainer) return;
                 
@@ -3089,9 +3133,7 @@ async function serveHTML(env, request) {
                     'system': '💻'
                 };
                 
-                // 如果是 system 模式，始终显示电脑图标标识模式，或者根据实际显示图标？
-                // 用户要求“风格一致”，通常 System 模式显示电脑图标。
-                iconContainer.textContent = mode === 'system' ? icons['system'] : icons[actualTheme];
+                iconContainer.textContent = icons[mode];
             },
             showThemeNotification(mode) {
                 const messages = {
