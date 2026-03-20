@@ -2542,9 +2542,22 @@ async function serveHTML(env, request) {
     <meta name="msapplication-TileColor" content="#3b82f6">
     <!-- 主题色 -->
     <meta name="theme-color" content="#3b82f6">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('cf-ip-collector-theme');
+            const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            let theme = 'light';
+            if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
+                theme = 'dark';
+            } else if (savedTheme === 'system') {
+                theme = systemPrefersDark ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
     <style>
         :root {
-            /* 浅色模式变量 */
+            /* 浅色模式变量 (默认) */
             --bg-primary: #f8fafc;
             --bg-secondary: #ffffff;
             --bg-card: #ffffff;
@@ -2810,7 +2823,7 @@ async function serveHTML(env, request) {
         }
     </style>
 </head>
-<body class="${showAdminButton ? 'authenticated' : 'unauthenticated'}" data-theme="light">
+<body class="${showAdminButton ? 'authenticated' : 'unauthenticated'}">
     ${!showAdminButton && (showSetPassword || showLogin) ? '<div class="content-overlay"></div>' : ''}
     <div class="container">
         <div class="header">
@@ -2843,7 +2856,7 @@ async function serveHTML(env, request) {
                     </svg>
                 </a>
                 <button class="social-link theme-toggle" onclick="toggleTheme()" title="切换主题" aria-label="切换主题">
-                    <span id="theme-icon">🌙</span>
+                    <span id="theme-icon" style="display: flex; align-items: center; justify-content: center;"></span>
                 </button>
             </div>
             ${showAdminButton ? `
@@ -3020,73 +3033,72 @@ async function serveHTML(env, request) {
         // ==================== 主题管理 ====================
         const ThemeManager = {
             STORAGE_KEY: 'cf-ip-collector-theme',
-            currentTheme: 'light',
+            currentTheme: 'light', // 这里的 currentTheme 指的是模式：light, dark, system
             init() {
                 const savedTheme = localStorage.getItem(this.STORAGE_KEY);
-                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                if (savedTheme) {
-                    this.currentTheme = savedTheme;
-                } else {
-                    this.currentTheme = systemPrefersDark ? 'dark' : 'light';
-                }
-                this.applyTheme(this.currentTheme);
-                this.updateThemeIcon();
+                this.currentTheme = savedTheme || 'system';
+                
+                // 初步应用（如果 blocking script 没跑或者没跑对）
+                this.apply(this.currentTheme);
+                
                 // 监听系统主题变化
                 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-                    if (!localStorage.getItem(this.STORAGE_KEY)) {
-                        this.currentTheme = e.matches ? 'dark' : 'light';
-                        this.applyTheme(this.currentTheme);
-                        this.updateThemeIcon();
+                    if (this.currentTheme === 'system') {
+                        this.apply('system');
                     }
                 });
             },
-            applyTheme(theme) {
-                document.body.setAttribute('data-theme', theme);
-                this.currentTheme = theme;
+            apply(mode) {
+                let actualTheme = mode;
+                if (mode === 'system') {
+                    actualTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                
+                document.documentElement.setAttribute('data-theme', actualTheme);
+                
                 // 更新 meta theme-color
-                const themeColor = theme === 'dark' ? '#0f172a' : '#3b82f6';
-                document.querySelector('meta[name="theme-color"]').setAttribute('content', themeColor);
+                const themeColor = actualTheme === 'dark' ? '#0f172a' : '#3b82f6';
+                const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+                if (metaThemeColor) metaThemeColor.setAttribute('content', themeColor);
+                
+                this.updateThemeIcon(mode, actualTheme);
             },
             toggle() {
-                const themes = ['light', 'dark', 'system'];
-                const currentIndex = themes.indexOf(this.currentTheme);
-                const nextIndex = (currentIndex + 1) % themes.length;
-                const nextTheme = themes[nextIndex];
-                if (nextTheme === 'system') {
+                const modes = ['light', 'dark', 'system'];
+                const currentIndex = modes.indexOf(this.currentTheme);
+                const nextIndex = (currentIndex + 1) % modes.length;
+                const nextMode = modes[nextIndex];
+                
+                if (nextMode === 'system') {
                     localStorage.removeItem(this.STORAGE_KEY);
-                    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                    this.applyTheme(systemPrefersDark ? 'dark' : 'light');
                 } else {
-                    localStorage.setItem(this.STORAGE_KEY, nextTheme);
-                    this.applyTheme(nextTheme);
+                    localStorage.setItem(this.STORAGE_KEY, nextMode);
                 }
-                this.currentTheme = nextTheme;
-                this.updateThemeIcon();
-                // 显示提示
-                this.showThemeNotification(nextTheme);
+                
+                this.currentTheme = nextMode;
+                this.apply(nextMode);
+                this.showThemeNotification(nextMode);
             },
-            updateThemeIcon() {
-                const icon = document.getElementById('theme-icon');
-                if (!icon) return;
-                const icons = {
-                    'light': '☀️',
-                    'dark': '🌙',
-                    'system': '💻'
+            updateThemeIcon(mode, actualTheme) {
+                const iconContainer = document.getElementById('theme-icon');
+                if (!iconContainer) return;
+                
+                const svgs = {
+                    'light': `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`,
+                    'dark': `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`,
+                    'system': `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>`
                 };
-                // 如果是system，根据当前实际显示的主题显示对应图标
-                let displayTheme = this.currentTheme;
-                if (displayTheme === 'system') {
-                    displayTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-                }
-                icon.textContent = icons[displayTheme];
+                
+                // 如果是 system 模式，显示电脑图标
+                iconContainer.innerHTML = mode === 'system' ? svgs['system'] : svgs[actualTheme];
             },
-            showThemeNotification(theme) {
+            showThemeNotification(mode) {
                 const messages = {
                     'light': '已切换到浅色模式 ☀️',
                     'dark': '已切换到深色模式 🌙',
                     'system': '已切换到系统模式 💻'
                 };
-                // 创建临时通知
+                // 原有通知逻辑保持不变...
                 const notification = document.createElement('div');
                 notification.style.cssText = [
                     'position: fixed',
@@ -3102,8 +3114,7 @@ async function serveHTML(env, request) {
                     'font-size: 0.9rem',
                     'animation: slideIn 0.3s ease'
                 ].join(';') + ';';
-                notification.textContent = messages[theme];
-                // 添加动画样式
+                notification.textContent = messages[mode];
                 if (!document.getElementById('theme-notification-style')) {
                     const style = document.createElement('style');
                     style.id = 'theme-notification-style';
@@ -3111,7 +3122,6 @@ async function serveHTML(env, request) {
                     document.head.appendChild(style);
                 }
                 document.body.appendChild(notification);
-                // 3秒后移除
                 setTimeout(() => {
                     notification.style.animation = 'slideIn 0.3s ease reverse';
                     setTimeout(() => notification.remove(), 300);
