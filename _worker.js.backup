@@ -2603,6 +2603,15 @@ async function serveHTML(env, request) {
             --admin-btn-bg: #3b82f6;
             --admin-btn-text: #ffffff;
             --admin-dropdown-btn-bg: #ef4444;
+            /* 元素特定变量 */
+            --header-gradient: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+            --social-github: #1f2937;
+            --result-info-bg: #3b82f6;
+            --result-success-bg: #10b981;
+            --result-warning-bg: #f59e0b;
+            --result-error-bg: #ef4444;
+            --result-primary-bg: #3b82f6;
+            --result-secondary-bg: #8b5cf6;
         }
         [data-theme="dark"] {
             /* 深色模式变量 (手动锁定) */
@@ -2655,6 +2664,15 @@ async function serveHTML(env, request) {
             --admin-btn-bg: #2563eb;
             --admin-btn-text: #ffffff;
             --admin-dropdown-btn-bg: #dc2626;
+            /* 元素特定变量 */
+            --header-gradient: linear-gradient(135deg, #60a5fa 0%, #22d3ee 100%);
+            --social-github: #e2e8f0;
+            --result-info-bg: #3253ad;
+            --result-success-bg: #064e3b;
+            --result-warning-bg: #a16207;
+            --result-error-bg: #7f1d1d;
+            --result-primary-bg: #12608d;
+            --result-secondary-bg: #581c87;
         }
         @media (prefers-color-scheme: dark) {
             :root:not([data-theme="light"]) {
@@ -2708,6 +2726,15 @@ async function serveHTML(env, request) {
                 --admin-btn-bg: #2563eb;
                 --admin-btn-text: #ffffff;
                 --admin-dropdown-btn-bg: #dc2626;
+                /* 元素特定变量 */
+                --header-gradient: linear-gradient(135deg, #60a5fa 0%, #22d3ee 100%);
+                --social-github: #e2e8f0;
+                --result-info-bg: #3253ad;
+                --result-success-bg: #064e3b;
+                --result-warning-bg: #a16207;
+                --result-error-bg: #7f1d1d;
+                --result-primary-bg: #12608d;
+                --result-secondary-bg: #581c87;
             }
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -2722,16 +2749,14 @@ async function serveHTML(env, request) {
         }
         .container { max-width: 1200px; margin: 0 auto; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid var(--border-primary); position: relative; }
-        .header-content h1 { font-size: 2.5rem; background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; font-weight: 700; }
-        [data-theme="dark"] .header-content h1 { background: linear-gradient(135deg, #60a5fa 0%, #22d3ee 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header-content h1 { font-size: 2.5rem; background: var(--header-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px; font-weight: 700; }
         .header-content p { color: var(--text-secondary); font-size: 1.1rem; }
         .social-links { display: flex; gap: 15px; }
         .social-link { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: var(--social-link-bg); border: 1px solid var(--border-primary); transition: all 0.3s ease; text-decoration: none; box-shadow: var(--shadow-sm); }
         .social-link:hover { background: var(--bg-hover); transform: translateY(-2px); border-color: var(--border-secondary); box-shadow: var(--shadow-button); }
         .social-link.youtube { color: #dc2626; }
         .social-link.youtube:hover { background: var(--youtube-hover); border-color: #dc2626; }
-        .social-link.github { color: #1f2937; }
-        [data-theme="dark"] .social-link.github { color: #e2e8f0; }
+        .social-link.github { color: var(--social-github); }
         .social-link.telegram { color: #3b82f6; display: inline-flex; align-items: center; justify-content: center; }
         .social-link.telegram svg { display: block; transform: translate(-2.8px, -3.6px); }
         .social-link.telegram:hover { background: var(--telegram-hover); border-color: #3b82f6; }
@@ -2818,18 +2843,12 @@ async function serveHTML(env, request) {
         /* 更新结果展示样式 */
         .update-result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
         .update-result-item { padding: 12px; border-radius: 8px; border-left: 4px solid; }
-        .update-result-item.info { border-left-color: #3b82f6; background: #91c1ff; }
-        .update-result-item.success { border-left-color: #10b981; background: #d1fae5; }
-        .update-result-item.warning { border-left-color: #f59e0b; background: #fef3c7; }
-        .update-result-item.error { border-left-color: #ef4444; background: #fee2e2; }
-        .update-result-item.primary { border-left-color: #0ea5e9; background: #a6dcff; }
-        .update-result-item.secondary { border-left-color: #a855f7; background: #f3e8ff; }
-        [data-theme="dark"] .update-result-item.info { background: #3253ad; }
-        [data-theme="dark"] .update-result-item.success { background: #064e3b; }
-        [data-theme="dark"] .update-result-item.warning { background: #a16207; }
-        [data-theme="dark"] .update-result-item.error { background: #7f1d1d; }
-        [data-theme="dark"] .update-result-item.primary { background: #12608d; }
-        [data-theme="dark"] .update-result-item.secondary { background: #581c87; }
+        .update-result-item.info { border-left-color: #3b82f6; background: var(--result-info-bg); }
+        .update-result-item.success { border-left-color: #10b981; background: var(--result-success-bg); }
+        .update-result-item.warning { border-left-color: #f59e0b; background: var(--result-warning-bg); }
+        .update-result-item.error { border-left-color: #ef4444; background: var(--result-error-bg); }
+        .update-result-item.primary { border-left-color: #0ea5e9; background: var(--result-primary-bg); }
+        .update-result-item.secondary { border-left-color: #a855f7; background: var(--result-secondary-bg); }
         .update-result-label { font-weight: 600; color: var(--text-primary); }
         .update-result-title { margin: 16px 0 12px 0; color: var(--text-heading); font-weight: 600; }
         .footer { text-align: center; margin-top: 40px; padding-top: 30px; border-top: 1px solid var(--border-primary); color: var(--text-secondary); transition: border-color 0.3s ease, color 0.3s ease; }
