@@ -2133,145 +2133,71 @@ async function fetchURLWithTimeout(url, timeout = 2000) {
     throw error;
   }
 }
-// ====================== P0: 延迟测试兜底策略 ======================
-// 兜底测速端点列表
-const LATENCY_TEST_FALLBACK = [
-    { url: 'https://speed.cloudflare.com/__down?bytes=50000', host: 'speed.cloudflare.com', name: 'cloudflare-speed' },
-    { url: 'https://cp.cloudflare.com/__down?bytes=50000', host: 'cp.cloudflare.com', name: 'cloudflare-cp' },
-    { url: 'https://edge-cloudflare-1.anycastjs.cf/__down?bytes=50000', host: 'edge-cloudflare-1.anycastjs.cf', name: 'anycast-js' }
-];
-let currentLatencyApiIndex = 0;
-
-// 兜底延迟测试函数
-async function testLatencyWithFallback(addressWithPort, timeout = 2000) {
-    let lastError = null;
-    for (let attempt = 0; attempt < LATENCY_TEST_FALLBACK.length; attempt++) {
-        const api = LATENCY_TEST_FALLBACK[attempt];
-        // 每个端点最多重试2次 (与原fetchWithRetry一致)
-        for (let retry = 0; retry < 2; retry++) {
-            try {
-                const parsed = parseAddressWithPort(addressWithPort);
-                let formattedAddress = addressWithPort;
-                if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
-                    formattedAddress = `[${parsed.address}]:${parsed.port}`;
-                }
-                const controller = new AbortController();
-                const tid = setTimeout(() => controller.abort(), timeout);
-                const start = performance.now();
-                const resp = await fetch(api.url, {
-                    signal: controller.signal,
-                    headers: { Host: api.host },
-                    cf: { resolveOverride: formattedAddress }
-                });
-                clearTimeout(tid);
-                if (resp.ok) {
-                    await resp.arrayBuffer();
-                    const latency = performance.now() - start;
-                    currentLatencyApiIndex = attempt;
-                    return { success: true, latency: Math.round(latency), api: api.name };
-                }
-                lastError = new Error(`HTTP ${resp.status}`);
-            } catch (e) {
-                lastError = e;
-                if (retry < 1) {
-                    // 指数退避重试 (与原代码一致)
-                    const delay = Math.min(500 * Math.pow(1.5, retry), 1200);
-                    await new Promise(r => setTimeout(r, delay + Math.floor(Math.random() * 100)));
-                }
-            }
-            // 重试之间CPU让出
-            await cpuYield();
-        }
-        console.warn(`[延迟兜底] ${api.name} 失败，尝试下一个...`);
-        // 切换端点前CPU让出
-        await cpuYield();
-    }
-    return { success: false, latency: null, error: lastError };
-}
-
-// 5-8秒后延迟重试失败的地址
-async function retryFailedLatencyAfterDelay(failedAddresses, env, startTime) {
-    const delay = 5000 + Math.random() * 3000 - (Date.now() - startTime);
-    if (delay <= 0) {
-        console.log('[延迟重试] 延迟时间已过，跳过重试');
-        return [];
-    }
-    console.log(`[延迟重试] 等待 ${delay}ms 后重试 ${failedAddresses.length} 个失败地址...`);
-    await new Promise(r => setTimeout(r, delay));
-    
-    // 检查剩余时间
-    if (getRemainingTimeBudget(startTime) < 2000) {
-        console.log('[延迟重试] 时间不足，跳过重试');
-        return [];
-    }
-    
-    const retryResults = [];
-    for (const addr of failedAddresses) {
-        const result = await testLatencyWithFallback(addr.address);
-        retryResults.push({
-            address: addr.address,
-            latency: result.success ? result.latency : null,
-            success: result.success
-        });
-        // CPU让出 + 动态延迟 (原代码: 690-750ms随机)
-        await cpuYield();
-        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 690));
-    }
-    console.log(`[延迟重试] 完成: ${retryResults.filter(r => r.success).length}/${retryResults.length} 成功`);
-    return retryResults;
-}
-
-
-
 /* ====================== 测速函数 —— 支持 IPv4、IPv6 和域名 ====================== */
 async function testIPLatency(addressWithPort, timeout = 2000) {
   if (!addressWithPort) {
     return { success: false, latency: null };
   }
-  // P0: 使用兜底延迟测试
-  const fallbackResult = await testLatencyWithFallback(addressWithPort, timeout);
-  if (fallbackResult.success) {
-    return { success: true, latency: fallbackResult.latency };
+  let attempts = 0;
+  const maxAttempts = 2; // 增加重试次数，第二次使用备用地址
+  let formattedAddress = addressWithPort;
+  const parsed = parseAddressWithPort(addressWithPort);
+  if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
+    formattedAddress = `[${parsed.address}]:${parsed.port}`;
+  }
+  // 定义主备测速地址
+  const primaryUrl = "https://speed.cloudflare.com/__down?bytes=50000";
+  const backupUrl = "https://speed.cloudflare.com/__down?bytes=50000";
+  const primaryHost = "speed.cloudflare.com";
+  const backupHost = "speed.cloudflare.com";
+  while (attempts < maxAttempts) {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), timeout);
+    // 第一次使用主地址，重试使用备用地址
+    const isRetry = attempts > 0;
+    const testUrl = isRetry ? backupUrl : primaryUrl;
+    const testHost = isRetry ? backupHost : primaryHost;
+    try {
+      const start = performance.now();
+      const resp = await fetchWithRetry(testUrl, {
+        signal: controller.signal,
+        headers: { Host: testHost },
+        cf: { resolveOverride: formattedAddress } // Cloudflare 的解析覆盖
+      }, 2, 600);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      await resp.arrayBuffer();
+      const latency = performance.now() - start;
+      return { success: true, latency: Math.round(latency) };
+    } catch (error) {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        return { success: false, latency: null };
+      }
+      await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * 61) + 690));
+    } finally {
+      clearTimeout(tid);
+    }
   }
   return { success: false, latency: null };
 }
 async function batchTestLatency(addresses, concurrency = 6) {
   if (!addresses || addresses.length === 0) return [];
   const results = new Array(addresses.length);
-  const failedAddresses = []; // 记录失败的地址用于兜底重试
-  const startTime = Date.now();
   for (let i = 0; i < addresses.length; i += concurrency) {
     const batch = addresses.slice(i, i + concurrency);
     await Promise.all(
       batch.map(async (addr, idx) => {
         if (!addr) {
           results[i + idx] = { success: false, latency: null };
-          failedAddresses.push({ address: addr, index: i + idx });
           return;
         }
         const res = await testIPLatency(addr);
         results[i + idx] = res;
-        if (!res.success) {
-          failedAddresses.push({ address: addr, index: i + idx });
-        }
-        await cpuYield(); // P0: CPU让出
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 322));
       })
     );
   }
-  // P0: 5-8秒后兜底重试失败的地址
-  const retryResults = await retryFailedLatencyAfterDelay(failedAddresses, null, startTime);
-  // 更新重试结果
-  for (const retry of retryResults) {
-    const originalAddr = addresses.find(a => a === retry.address);
-    if (originalAddr) {
-      const idx = addresses.indexOf(originalAddr);
-      if (idx !== -1 && retry.success) {
-        results[idx] = { success: true, latency: retry.latency };
-      }
-    }
-  }
-  return { results, failedResults: retryResults };
+  return results;
 }
 /* ====================== 清理旧历史数据 ====================== */
 async function cleanupOldIPs(env) {
