@@ -38,6 +38,8 @@ export default {
   async scheduled(event, env, ctx) {
     console.log("Scheduled task: Starting full IP update + speed test");
     ctx.waitUntil(handleUpdate(env));
+    // 后台独立执行延迟重试（不影响主流程）
+    ctx.waitUntil(retryFailedLatencyAsync(env));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -2183,9 +2185,8 @@ async function testIPLatency(addressWithPort, timeout = 2000) {
 async function batchTestLatency(addresses, concurrency = 6) {
   if (!addresses || addresses.length === 0) return [];
   const results = new Array(addresses.length);
-  const maxRetryRounds = 2; // 最多重试2轮
   
-  // 主测试
+  // 主测试（不含重试，重试由后台独立执行）
   for (let i = 0; i < addresses.length; i += concurrency) {
     const batch = addresses.slice(i, i + concurrency);
     await Promise.all(
@@ -2201,44 +2202,87 @@ async function batchTestLatency(addresses, concurrency = 6) {
     );
   }
   
-  // 循环重试失败地址，直到无失败或达到最大轮数
-  let retryRound = 0;
-  while (retryRound < maxRetryRounds) {
-    // 收集当前失败的地址
+  return results;
+}
+
+/* ====================== 后台延迟重试（独立于/update路径） ====================== */
+async function retryFailedLatencyAsync(env) {
+  console.log('[后台重试] 开始执行延迟重试...');
+  const startTime = Date.now();
+  
+  try {
+    // 获取最新批次数据
+    const latestData = await getStoredIPsLatest(env);
+    if (!latestData || !latestData.ips || !Array.isArray(latestData.ips)) {
+      console.log('[后台重试] 无有效数据，跳过');
+      return;
+    }
+    
+    // 找出需要重试的地址（无延迟或延迟为null）
     const failedAddresses = [];
-    for (let i = 0; i < results.length; i++) {
-      if (results[i] && !results[i].success && addresses[i]) {
-        failedAddresses.push({ address: addresses[i], index: i });
+    for (let i = 0; i < latestData.ips.length; i++) {
+      const ip = latestData.ips[i];
+      if (ip && ip.address && (!ip.latency || ip.latency === null)) {
+        failedAddresses.push({ address: ip.address, index: i });
       }
     }
     
     if (failedAddresses.length === 0) {
-      console.log(`[延迟重试] 所有地址测试成功`);
-      break;
+      console.log('[后台重试] 无失败地址需要重试');
+      return;
     }
     
-    retryRound++;
-    // 1-2秒随机延迟
-    const delay = 1000 + Math.random() * 1000;
-    console.log(`[延迟重试] 第${retryRound}轮: 等待${Math.floor(delay)}ms后重试${failedAddresses.length}个失败地址...`);
-    await new Promise(r => setTimeout(r, delay));
+    console.log(`[后台重试] 发现${failedAddresses.length}个地址需要重试`);
     
-    // 重试失败的地址
-    for (const failed of failedAddresses) {
-      const result = await testIPLatency(failed.address);
-      results[failed.index] = result;
-      // 原代码的动态延迟
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 690));
+    // 最多重试2轮
+    const maxRetryRounds = 2;
+    let retryRound = 0;
+    
+    while (retryRound < maxRetryRounds) {
+      // 收集当前失败的地址
+      const currentFailed = [];
+      for (const failed of failedAddresses) {
+        if (failed.address) {
+          currentFailed.push(failed);
+        }
+      }
+      
+      if (currentFailed.length === 0) {
+        console.log(`[后台重试] 第${retryRound}轮: 所有地址已成功`);
+        break;
+      }
+      
+      retryRound++;
+      // 1-2秒随机延迟
+      const delay = 1000 + Math.random() * 1000;
+      console.log(`[后台重试] 第${retryRound}轮: 等待${Math.floor(delay)}ms后重试${currentFailed.length}个地址...`);
+      await new Promise(r => setTimeout(r, delay));
+      
+      // 重试
+      for (const failed of currentFailed) {
+        const result = await testIPLatency(failed.address);
+        if (result.success) {
+          // 更新KV中的延迟数据
+          const ip = latestData.ips[failed.index];
+          if (ip) {
+            ip.latency = result.latency;
+            console.log(`[后台重试] ${failed.address} 成功, 延迟: ${result.latency}ms`);
+          }
+          // 从待重试列表中移除
+          failed.address = null;
+        }
+        // 原代码的动态延迟
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 690));
+      }
     }
     
-    console.log(`[延迟重试] 第${retryRound}轮完成: ${failedAddresses.length}个地址已重试`);
+    // 保存更新后的数据到KV
+    await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(latestData));
+    console.log(`[后台重试] 完成，总耗时: ${Date.now() - startTime}ms`);
+    
+  } catch (e) {
+    console.error('[后台重试] 错误:', e);
   }
-  
-  // 统计最终结果
-  const successCount = results.filter(r => r && r.success).length;
-  console.log(`[延迟测试] 最终结果: ${successCount}/${results.length} 成功`);
-  
-  return results;
 }
 /* ====================== 清理旧历史数据 ====================== */
 async function cleanupOldIPs(env) {
