@@ -2179,9 +2179,9 @@ async function testLatencyWithFallback(addressWithPort, timeout = 2000) {
     return { success: false, latency: null, error: lastError };
 }
 
-// 31秒后延迟重试失败的地址
+// 5-8秒后延迟重试失败的地址
 async function retryFailedLatencyAfterDelay(failedAddresses, env, startTime) {
-    const delay = 31000 - (Date.now() - startTime);
+    const delay = 5000 + Math.random() * 3000 - (Date.now() - startTime);
     if (delay <= 0) {
         console.log('[延迟重试] 延迟时间已过，跳过重试');
         return [];
@@ -2248,7 +2248,7 @@ async function batchTestLatency(addresses, concurrency = 6) {
       })
     );
   }
-  // P0: 31秒后兜底重试失败的地址
+  // P0: 5-8秒后兜底重试失败的地址
   const retryResults = await retryFailedLatencyAfterDelay(failedAddresses, null, startTime);
   // 更新重试结果
   for (const retry of retryResults) {
