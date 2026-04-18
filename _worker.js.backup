@@ -2203,8 +2203,9 @@ async function retryFailedLatencyAfterDelay(failedAddresses, env, startTime) {
             latency: result.success ? result.latency : null,
             success: result.success
         });
-        // CPU让出
+        // CPU让出 + 动态延迟 (原代码: 690-750ms随机)
         await cpuYield();
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 690));
     }
     console.log(`[延迟重试] 完成: ${retryResults.filter(r => r.success).length}/${retryResults.length} 成功`);
     return retryResults;
