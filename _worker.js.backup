@@ -1,3 +1,39 @@
+// ====================== P2: 请求上下文封装 ======================
+class CollectorContext {
+  constructor(env) {
+    this.env = env;
+    this.startTime = Date.now();
+    this.stats = { processed: 0, failed: 0, apiSwitchCount: 0 };
+  }
+  
+  get remainingTime() {
+    return 28000 - (Date.now() - this.startTime);
+  }
+  
+  checkTimeBudget() {
+    if (this.remainingTime < 3000) {
+      throw new Error('Insufficient time budget for remaining operations');
+    }
+  }
+  
+  recordSuccess() {
+    this.stats.processed++;
+  }
+  
+  recordFailure() {
+    this.stats.failed++;
+  }
+}
+
+// 创建全局上下文实例（延迟初始化）
+let collectorContext = null;
+function getCollectorContext(env) {
+  if (!collectorContext) {
+    collectorContext = new CollectorContext(env);
+  }
+  return collectorContext;
+}
+
 export default {
   async scheduled(event, env, ctx) {
     console.log("Scheduled task: Starting full IP update + speed test");
@@ -91,6 +127,42 @@ const MAX_BATCH_SIZE = 29;
 const MIN_BATCH_SIZE = 3;
 const SUCCESS_HISTORY_LENGTH = 10;
 const MAX_WAVES = 3; // 优化：每波次处理3个批次，平衡并发与稳定性
+// ====================== P0: CPU让出机制 ======================
+let cpuYieldCounter = 0;
+const CPU_YIELD_INTERVAL = 500; // 每500次操作让出一次CPU
+async function cpuYield() {
+    cpuYieldCounter++;
+    if (cpuYieldCounter >= CPU_YIELD_INTERVAL) {
+        cpuYieldCounter = 0;
+        await new Promise(r => setTimeout(r, 0));
+    }
+}
+// ====================== P0: 多API兜底 ======================
+const LOCATION_API_FALLBACK = [
+    { name: 'ip-api.com', url: 'http://ip-api.com/batch', timeout: 2000, fields: 'countryCode' },
+    { name: 'ipapi.is', url: 'https://api.ipapi.is/', timeout: 3000, fields: 'location.country_code' },
+    { name: 'ip-api.com-pro', url: 'http://ip-api.com/json/', timeout: 2500, fields: 'countryCode' }
+];
+let currentApiIndex = 0;
+// ====================== P1: 资源自适应 ======================
+const DEFAULT_EXECUTION_TIME = 25000; // 预留5秒缓冲
+function getRemainingTimeBudget(startTime) {
+    return DEFAULT_EXECUTION_TIME - (Date.now() - startTime);
+}
+function shouldReduceConcurrency(remainingTime, remainingTasks) {
+    if (remainingTime < 3000) return true; // 少于3秒
+const timePerTask = remainingTime / remainingTasks;
+    return timePerTask < 50; // 每任务少于50ms
+}
+// ====================== P1: 动态批次调整 ======================
+function calculateDynamicWaves(addressType, stats) {
+    const typeStats = stats?.[addressType];
+    const successRate = typeStats?.totalAddresses > 0 
+        ? typeStats.successfulAddresses / typeStats.totalAddresses 
+        : 0.85; // 默认成功率
+    // 成功率越高，并发越高 (1-5)
+    return Math.max(1, Math.min(5, Math.floor(successRate * 5)));
+}
   // 获取默认批次大小
   function getDefaultBatchSize(addressType) {
     switch (addressType) {
@@ -183,16 +255,28 @@ async function batchInWavesWithStats(items, batchFn, addressType, env) {
     for (let i = 0; i < items.length; i += dynamicChunkSize) {
         chunks.push(items.slice(i, i + dynamicChunkSize));
     }
-    // 逐波处理
+    // 逐波处理 - 集成动态并发+资源自适应
     const results = [];
     const batchResults = [];
-    for (let i = 0; i < chunks.length; i += MAX_WAVES) {
-        const wave = chunks.slice(i, i + MAX_WAVES);
+    const dynamicWaves = calculateDynamicWaves(addressType, stats); // P1: 动态并发
+    const actualWaves = Math.min(dynamicWaves, MAX_WAVES);
+    const processStartTime = Date.now();
+    for (let i = 0; i < chunks.length; i += actualWaves) {
+        // P1: 资源自适应 - 检查剩余时间
+        const remainingTime = getRemainingTimeBudget(processStartTime);
+        const remainingTasks = chunks.length - i;
+        const effectiveWaves = shouldReduceConcurrency(remainingTime, remainingTasks) 
+            ? Math.max(1, Math.floor(actualWaves * 0.5)) 
+            : actualWaves;
+        
+        const wave = chunks.slice(i, i + effectiveWaves);
         const promises = wave.map(async (chunk, waveIndex) => {
             try {
                 const startTime = Date.now();
                 const result = await batchFn(chunk);
                 const duration = Date.now() - startTime;
+                // P0: CPU让出
+                await cpuYield();
                 // 检查 result 是否是地址数组格式（包含 success 字段的对象数组）
                 const isAddressArrayFormat = Array.isArray(result) && result.length > 0 &&
                     result[0] && typeof result[0] === 'object' && 'success' in result[0];
@@ -234,7 +318,7 @@ async function batchInWavesWithStats(items, batchFn, addressType, env) {
         const waveResults = await Promise.all(promises);
         waveResults.forEach(wr => results.push(...wr));
         // 波次间延迟（优化：从980-1031ms降至200-300ms）
-        if (i + MAX_WAVES < chunks.length) {
+        if (i + effectiveWaves < chunks.length) {
             await new Promise(r => setTimeout(r, Math.floor(Math.random() * 100) + 200));
         }
     }
@@ -1720,17 +1804,29 @@ async function getLocationsForAddresses(addresses, env) {
     for (let i = 0; i < items.length; i += dynamicChunkSize) {
       chunks.push(items.slice(i, i + dynamicChunkSize));
     }
-    // 逐波处理
+    // 逐波处理 - 集成动态并发+资源自适应
     const results = [];
     const batchResults = [];
-    for (let i = 0; i < chunks.length; i += MAX_WAVES) {
-      const wave = chunks.slice(i, i + MAX_WAVES);
+    const dynamicWaves = calculateDynamicWaves(addressType, stats); // P1: 动态并发
+    const actualWaves = Math.min(dynamicWaves, MAX_WAVES);
+    const processStartTime = Date.now();
+    for (let i = 0; i < chunks.length; i += actualWaves) {
+      // P1: 资源自适应 - 检查剩余时间
+      const remainingTime = getRemainingTimeBudget(processStartTime);
+      const remainingTasks = chunks.length - i;
+      const effectiveWaves = shouldReduceConcurrency(remainingTime, remainingTasks) 
+          ? Math.max(1, Math.floor(actualWaves * 0.5)) 
+          : actualWaves;
+      
+      const wave = chunks.slice(i, i + effectiveWaves);
       const promises = wave.map(async (chunk, waveIndex) => {
         try {
           const startTime = Date.now();
           // 修改：batchFn 现在应该返回每个地址的结果数组
           const addressResults = await batchFn(chunk);
           const duration = Date.now() - startTime;
+          // P0: CPU让出
+          await cpuYield();
           // 修改：记录批次成功，以及每个地址的详细结果
           const hasAnySuccess = addressResults && addressResults.some(r => r && r.success);
           batchResults.push({
@@ -1764,7 +1860,7 @@ async function getLocationsForAddresses(addresses, env) {
       const waveResults = await Promise.all(promises);
       waveResults.forEach(wr => results.push(...wr));
       // 波次间延迟
-      if (i + MAX_WAVES < chunks.length) {
+      if (i + effectiveWaves < chunks.length) {
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 960));
       }
     }
@@ -1826,6 +1922,35 @@ async function getLocationsForAddresses(addresses, env) {
       domainIndices.push(idx); 
     }
   });
+  // ====================== P0: 多API兜底调用 ======================
+async function fetchLocationWithFallback(batchBody) {
+    let lastError = null;
+    for (let attempt = 0; attempt < LOCATION_API_FALLBACK.length; attempt++) {
+        const api = LOCATION_API_FALLBACK[attempt];
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), api.timeout);
+            const resp = await fetch(api.url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(batchBody),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            if (resp.ok) {
+                const data = await resp.json();
+                currentApiIndex = attempt; // 记录成功的API
+                return { success: true, data, api: api.name };
+            }
+            lastError = new Error(`HTTP ${resp.status}`);
+        } catch (e) {
+            lastError = e;
+            console.warn(`[API兜底] ${api.name} 失败，尝试下一个...`);
+        }
+    }
+    return { success: false, error: lastError };
+}
+
   // IPv4 - 使用动态批次大小（修改版：返回每个地址的结果）
   if (ipv4Addresses.length > 0) {
     console.log(`开始处理 ${ipv4Addresses.length} 个 IPv4 地址`);
@@ -1833,34 +1958,29 @@ async function getLocationsForAddresses(addresses, env) {
       const batchIndices = ipv4Indices.slice(ipv4Addresses.indexOf(batchIps[0]), ipv4Addresses.indexOf(batchIps[0]) + batchIps.length);
       const batchBody = batchIps.map(ip => ({ query: ip, fields: "countryCode" }));
       try {
-        const resp = await fetchWithRetry("http://ip-api.com/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(batchBody)
-        }, 2, 2000);  // 超时2秒，重试2次
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data && Array.isArray(data)) {
-            // 修改：返回每个地址的查询结果
-            return data.map((o, j) => {
-              const idx = batchIndices[j];
-              const success = !!(o?.countryCode);
-              if (success && idx < locs.length) {
-                locs[idx] = o.countryCode;
-              }
-              return {
-                address: batchIps[j],
-                success: success,
-                countryCode: o?.countryCode || null
-              };
-            });
-          }
+        // P0: 使用多API兜底
+        const result = await fetchLocationWithFallback(batchBody);
+        if (result.success && result.data && Array.isArray(result.data)) {
+          console.log(`[API] 使用 ${result.api} 获取地理位置`);
+          return result.data.map((o, j) => {
+            const idx = batchIndices[j];
+            const success = !!(o?.countryCode);
+            if (success && idx < locs.length) {
+              locs[idx] = o.countryCode;
+            }
+            return {
+              address: batchIps[j],
+              success: success,
+              countryCode: o?.countryCode || null
+            };
+          });
         }
         // API 请求失败，返回所有地址失败
+        console.error(`[API兜底] 所有API失败: ${result.error}`);
         return batchIps.map(ip => ({
           address: ip,
           success: false,
-          error: 'API request failed'
+          error: result.error?.message || 'All APIs failed'
         }));
       } catch (e) {
         console.error("Location IPv4 batch failed:", e);
@@ -1885,32 +2005,27 @@ async function getLocationsForAddresses(addresses, env) {
       const batchIndices = ipv6Indices.slice(ipv6Addresses.indexOf(batchIps[0]), ipv6Addresses.indexOf(batchIps[0]) + batchIps.length);
       const batchBody = batchIps.map(ip => ({ query: ip, fields: "countryCode" }));
       try {
-        const resp = await fetchWithRetry("http://ip-api.com/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(batchBody)
-        }, 2, 5000); // 超时增加到5秒，重试2次
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data && Array.isArray(data)) {
-            return data.map((o, j) => {
-              const idx = batchIndices[j];
-              const success = !!(o?.countryCode);
-              if (success && idx < locs.length) {
-                locs[idx] = o.countryCode + '_IPv6';
-              }
-              return {
-                address: batchIps[j],
-                success: success,
-                countryCode: o?.countryCode || null
-              };
-            });
-          }
+        // P0: 使用多API兜底
+        const result = await fetchLocationWithFallback(batchBody);
+        if (result.success && result.data && Array.isArray(result.data)) {
+          console.log(`[API] 使用 ${result.api} 获取IPv6地理位置`);
+          return result.data.map((o, j) => {
+            const idx = batchIndices[j];
+            const success = !!(o?.countryCode);
+            if (success && idx < locs.length) {
+              locs[idx] = o.countryCode + '_IPv6';
+            }
+            return {
+              address: batchIps[j],
+              success: success,
+              countryCode: o?.countryCode || null
+            };
+          });
         }
         return batchIps.map(ip => ({
           address: ip,
           success: false,
-          error: 'API request failed'
+          error: result.error?.message || 'All APIs failed'
         }));
       } catch (e) {
         console.error("Location IPv6 batch failed:", e);
