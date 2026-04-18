@@ -2183,6 +2183,9 @@ async function testIPLatency(addressWithPort, timeout = 2000) {
 async function batchTestLatency(addresses, concurrency = 6) {
   if (!addresses || addresses.length === 0) return [];
   const results = new Array(addresses.length);
+  const maxRetryRounds = 3; // 最多重试3轮
+  
+  // 主测试
   for (let i = 0; i < addresses.length; i += concurrency) {
     const batch = addresses.slice(i, i + concurrency);
     await Promise.all(
@@ -2197,6 +2200,44 @@ async function batchTestLatency(addresses, concurrency = 6) {
       })
     );
   }
+  
+  // 循环重试失败地址，直到无失败或达到最大轮数
+  let retryRound = 0;
+  while (retryRound < maxRetryRounds) {
+    // 收集当前失败的地址
+    const failedAddresses = [];
+    for (let i = 0; i < results.length; i++) {
+      if (results[i] && !results[i].success && addresses[i]) {
+        failedAddresses.push({ address: addresses[i], index: i });
+      }
+    }
+    
+    if (failedAddresses.length === 0) {
+      console.log(`[延迟重试] 所有地址测试成功`);
+      break;
+    }
+    
+    retryRound++;
+    // 5-8秒随机延迟
+    const delay = 5000 + Math.random() * 3000;
+    console.log(`[延迟重试] 第${retryRound}轮: 等待${Math.floor(delay)}ms后重试${failedAddresses.length}个失败地址...`);
+    await new Promise(r => setTimeout(r, delay));
+    
+    // 重试失败的地址
+    for (const failed of failedAddresses) {
+      const result = await testIPLatency(failed.address);
+      results[failed.index] = result;
+      // 原代码的动态延迟
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 690));
+    }
+    
+    console.log(`[延迟重试] 第${retryRound}轮完成: ${failedAddresses.length}个地址已重试`);
+  }
+  
+  // 统计最终结果
+  const successCount = results.filter(r => r && r.success).length;
+  console.log(`[延迟测试] 最终结果: ${successCount}/${results.length} 成功`);
+  
   return results;
 }
 /* ====================== 清理旧历史数据 ====================== */
