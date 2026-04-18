@@ -2147,33 +2147,43 @@ async function testLatencyWithFallback(addressWithPort, timeout = 2000) {
     let lastError = null;
     for (let attempt = 0; attempt < LATENCY_TEST_FALLBACK.length; attempt++) {
         const api = LATENCY_TEST_FALLBACK[attempt];
-        try {
-            const parsed = parseAddressWithPort(addressWithPort);
-            let formattedAddress = addressWithPort;
-            if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
-                formattedAddress = `[${parsed.address}]:${parsed.port}`;
+        // 每个端点最多重试2次 (与原fetchWithRetry一致)
+        for (let retry = 0; retry < 2; retry++) {
+            try {
+                const parsed = parseAddressWithPort(addressWithPort);
+                let formattedAddress = addressWithPort;
+                if (parsed.type === 'ipv6' && !addressWithPort.startsWith('[')) {
+                    formattedAddress = `[${parsed.address}]:${parsed.port}`;
+                }
+                const controller = new AbortController();
+                const tid = setTimeout(() => controller.abort(), timeout);
+                const start = performance.now();
+                const resp = await fetch(api.url, {
+                    signal: controller.signal,
+                    headers: { Host: api.host },
+                    cf: { resolveOverride: formattedAddress }
+                });
+                clearTimeout(tid);
+                if (resp.ok) {
+                    await resp.arrayBuffer();
+                    const latency = performance.now() - start;
+                    currentLatencyApiIndex = attempt;
+                    return { success: true, latency: Math.round(latency), api: api.name };
+                }
+                lastError = new Error(`HTTP ${resp.status}`);
+            } catch (e) {
+                lastError = e;
+                if (retry < 1) {
+                    // 指数退避重试 (与原代码一致)
+                    const delay = Math.min(500 * Math.pow(1.5, retry), 1200);
+                    await new Promise(r => setTimeout(r, delay + Math.floor(Math.random() * 100)));
+                }
             }
-            const controller = new AbortController();
-            const tid = setTimeout(() => controller.abort(), timeout);
-            const start = performance.now();
-            const resp = await fetch(api.url, {
-                signal: controller.signal,
-                headers: { Host: api.host },
-                cf: { resolveOverride: formattedAddress }
-            });
-            clearTimeout(tid);
-            if (resp.ok) {
-                await resp.arrayBuffer();
-                const latency = performance.now() - start;
-                currentLatencyApiIndex = attempt; // 记录成功的API
-                return { success: true, latency: Math.round(latency), api: api.name };
-            }
-            lastError = new Error(`HTTP ${resp.status}`);
-        } catch (e) {
-            lastError = e;
-            console.warn(`[延迟兜底] ${api.name} 失败，尝试下一个...`);
+            // 重试之间CPU让出
+            await cpuYield();
         }
-        // P0: CPU让出，避免连续请求压力过大
+        console.warn(`[延迟兜底] ${api.name} 失败，尝试下一个...`);
+        // 切换端点前CPU让出
         await cpuYield();
     }
     return { success: false, latency: null, error: lastError };
