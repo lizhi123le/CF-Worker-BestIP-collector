@@ -1613,6 +1613,7 @@ async function handleUpdate(env) {
   console.log(`Latency total delay: ${latencyStats.totalDelayTime}ms`);
   console.log(`Response keys:`, Object.keys(response));
   console.log(`===================\n`);
+  console.log(`=== handleUpdate 完成，返回前端 ===`);
   return jsonResponse(response);
 }
 /* ====================== 从最近历史记录获取数据 ====================== */
