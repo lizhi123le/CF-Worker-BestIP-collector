@@ -2173,6 +2173,8 @@ async function testLatencyWithFallback(addressWithPort, timeout = 2000) {
             lastError = e;
             console.warn(`[延迟兜底] ${api.name} 失败，尝试下一个...`);
         }
+        // P0: CPU让出，避免连续请求压力过大
+        await cpuYield();
     }
     return { success: false, latency: null, error: lastError };
 }
