@@ -2183,7 +2183,7 @@ async function testIPLatency(addressWithPort, timeout = 2000) {
 async function batchTestLatency(addresses, concurrency = 6) {
   if (!addresses || addresses.length === 0) return [];
   const results = new Array(addresses.length);
-  const maxRetryRounds = 3; // 最多重试3轮
+  const maxRetryRounds = 2; // 最多重试2轮
   
   // 主测试
   for (let i = 0; i < addresses.length; i += concurrency) {
@@ -2218,8 +2218,8 @@ async function batchTestLatency(addresses, concurrency = 6) {
     }
     
     retryRound++;
-    // 5-8秒随机延迟
-    const delay = 5000 + Math.random() * 3000;
+    // 1-2秒随机延迟
+    const delay = 1000 + Math.random() * 1000;
     console.log(`[延迟重试] 第${retryRound}轮: 等待${Math.floor(delay)}ms后重试${failedAddresses.length}个失败地址...`);
     await new Promise(r => setTimeout(r, delay));
     
