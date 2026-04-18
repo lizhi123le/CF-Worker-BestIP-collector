@@ -2183,6 +2183,8 @@ async function testIPLatency(addressWithPort, timeout = 2000) {
 async function batchTestLatency(addresses, concurrency = 6) {
   if (!addresses || addresses.length === 0) return [];
   const results = new Array(addresses.length);
+  const failedAddresses = []; // 记录失败的地址用于重试
+  const startTime = Date.now();
   for (let i = 0; i < addresses.length; i += concurrency) {
     const batch = addresses.slice(i, i + concurrency);
     await Promise.all(
@@ -2193,10 +2195,48 @@ async function batchTestLatency(addresses, concurrency = 6) {
         }
         const res = await testIPLatency(addr);
         results[i + idx] = res;
+        if (!res.success) {
+          failedAddresses.push({ address: addr, index: i + idx });
+        }
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * 51) + 322));
       })
     );
   }
+  
+  // 5-8秒后重试失败的地址
+  if (failedAddresses.length > 0) {
+    const delay = 5000 + Math.random() * 3000;
+    console.log(`[延迟重试] 等待 ${Math.floor(delay)}ms 后重试 ${failedAddresses.length} 个失败地址...`);
+    await new Promise(r => setTimeout(r, delay));
+    
+    // 检查剩余时间
+    const remainingTime = 25000 - (Date.now() - startTime);
+    if (remainingTime > 2000) {
+      const retryResults = [];
+      for (const addr of failedAddresses) {
+        const result = await testIPLatency(addr.address);
+        retryResults.push({
+          address: addr.address,
+          latency: result.success ? result.latency : null,
+          success: result.success,
+          index: addr.index
+        });
+        // 原代码的动态延迟
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 61) + 690));
+      }
+      
+      // 更新重试结果
+      for (const retry of retryResults) {
+        if (retry.success && retry.index >= 0 && retry.index < results.length) {
+          results[retry.index] = { success: true, latency: retry.latency };
+        }
+      }
+      console.log(`[延迟重试] 完成: ${retryResults.filter(r => r.success).length}/${retryResults.length} 成功`);
+    } else {
+      console.log('[延迟重试] 时间不足，跳过重试');
+    }
+  }
+  
   return results;
 }
 /* ====================== 清理旧历史数据 ====================== */
