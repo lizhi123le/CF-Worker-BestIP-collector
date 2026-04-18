@@ -37,11 +37,11 @@ function getCollectorContext(env) {
 export default {
   async scheduled(event, env, ctx) {
     console.log("Scheduled task: Starting full IP update + speed test");
-    ctx.waitUntil(handleUpdate(env).then(() => {
-      // 测试完成后再触发后台重试
-      console.log("测试完成，开始后台延迟重试...");
-      return retryFailedLatencyAsync(env);
-    }));
+    // 先等待主更新完成，然后触发后台重试
+    await handleUpdate(env);
+    // 主流程完成后，触发后台重试
+    console.log("主流程完成，触发后台延迟重试...");
+    ctx.waitUntil(retryFailedLatencyAsync(env));
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
