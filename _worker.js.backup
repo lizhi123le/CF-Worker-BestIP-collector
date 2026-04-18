@@ -2286,7 +2286,16 @@ async function retryFailedLatencyAsync(env) {
     
     // 保存更新后的数据到KV
     console.log('[后台重试] 保存更新到KV...');
-    await env.IP_STORAGE.put("cloudflare_ips", JSON.stringify(latestData));
+    const sourceKey = latestData._sourceKey;
+    if (sourceKey) {
+      delete latestData._sourceKey; // 避免将该内部属性写入KV
+    }
+    const jsonData = JSON.stringify(latestData);
+    
+    if (sourceKey) {
+      await env.IP_STORAGE.put(sourceKey, jsonData);
+    }
+    await env.IP_STORAGE.put("cloudflare_ips", jsonData);
     console.log(`[后台重试] 完成，总耗时: ${Date.now() - startTime}ms`);
     
   } catch (e) {
